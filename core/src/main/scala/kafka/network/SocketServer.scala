@@ -41,7 +41,7 @@ import org.apache.kafka.common.network.KafkaChannel.ChannelMuteEvent
 import org.apache.kafka.common.network.{ChannelBuilder, ChannelBuilders, ClientInformation, KafkaChannel, ListenerName, ListenerReconfigurable, NetworkSend, Selectable, Send, ServerConnectionId, Selector => KSelector}
 import org.apache.kafka.common.protocol.ApiKeys
 import org.apache.kafka.common.requests.{ApiVersionsRequest, RequestContext, RequestHeader}
-import org.apache.kafka.common.security.auth.SecurityProtocol
+import org.apache.kafka.common.security.auth.{KafkaPrincipal, SecurityProtocol}
 import org.apache.kafka.common.utils.{KafkaThread, LogContext, Time, Utils}
 import org.apache.kafka.common.{Endpoint, KafkaException, MetricName, Reconfigurable}
 import org.apache.kafka.network.{ConnectionQuotaEntity, ConnectionThrottledException, SocketServerConfigs, TooManyConnectionsException}
@@ -53,6 +53,8 @@ import org.apache.kafka.server.network.ConnectionDisconnectListener
 import org.apache.kafka.server.quota.QuotaUtils
 import org.apache.kafka.server.util.FutureUtils
 import org.slf4j.event.Level
+
+import org.apache.kafka.clients.producer.SharedMemoryManager
 
 import scala.collection._
 import scala.collection.mutable.ArrayBuffer
@@ -222,12 +224,94 @@ class SocketServer(
     dataPlaneAcceptor.configure(parsedConfigs)
     dataPlaneAcceptors.put(endpoint, dataPlaneAcceptor)
     info(s"Created data-plane acceptor and processors for endpoint : ${endpoint.listenerName}")
+
+    val isBroker = apiVersionManager.listenerType.equals(ListenerType.BROKER)
+    if (isBroker) {
+      val pollingTask = new MemoryPollingTask(dataPlaneRequestChannel)
+      pollingTask.start()
+    }
   }
 
   private def endpoints = config.listeners.map(l => l.listenerName -> l).toMap
 
   protected def createDataPlaneAcceptor(endPoint: EndPoint, isPrivilegedListener: Boolean, requestChannel: RequestChannel): DataPlaneAcceptor = {
     new DataPlaneAcceptor(this, endPoint, config, nodeId, connectionQuotas, time, isPrivilegedListener, requestChannel, metrics, credentialProvider, logContext, memoryPool, apiVersionManager)
+  }
+
+  class MemoryPollingTask(requestChannel: RequestChannel) extends Runnable {
+    @volatile private var running = true // 폴링 제어 변수
+    private var thread: Option[Thread] = None // 내부 Thread 관리
+
+    def start(): Unit = {
+      if (thread.isDefined && thread.get.isAlive) {
+        println("Polling task is already running!")
+        return
+      }
+
+      running = true
+      val t = new Thread(this)
+      thread = Some(t)
+      t.start()
+      println("Polling task started.")
+    }
+
+    def stop(): Unit = {
+      running = false
+    }
+
+    override def run(): Unit = {
+      while (running) {
+          val rawData = SharedMemoryManager.readSharedMemoryByBuffer()
+          if (rawData != null) {
+            val header = RequestHeader.parse(rawData)
+            val nowNanos = time.nanoseconds()
+            val inetAddress = InetAddress.getLoopbackAddress
+            val kafkaPrincipal = new KafkaPrincipal(KafkaPrincipal.USER_TYPE, "ANONYMOUS")
+            val listenerName = new ListenerName("PLAINTEXT")
+            val clientInformation = new ClientInformation("client-software-name", "client-software-version")
+            val connectionId = "dummy-connection-1"
+
+            val context = new RequestContext(
+              header, 
+              connectionId, 
+              inetAddress,
+              kafkaPrincipal, 
+              listenerName, 
+              SecurityProtocol.PLAINTEXT,
+              clientInformation,
+              false
+            )
+
+            val req = new RequestChannel.Request(
+              1, 
+              context = context,
+              startTimeNanos = nowNanos, 
+              MemoryPool.NONE, 
+              rawData, 
+              dataPlaneRequestChannel.metrics,
+              None)
+            dataPlaneRequestChannel.sendRequest(req)
+          
+        } else {
+          Thread.`yield`()
+        }
+        
+        // Thread.sleep(intervalMs)
+      }
+      println("Polling task stopped.")
+    }
+  }
+  
+
+  def toHexString(buffer: ByteBuffer): String = {
+    val duplicate = buffer.duplicate() // 원본 유지
+    duplicate.rewind() // position을 0으로 초기화
+
+    val sb = new StringBuilder
+    while (duplicate.hasRemaining) {
+      sb.append(f"${duplicate.get() & 0xFF}%02X ") // 16진수 변환
+    }
+    sb.toString().trim
   }
 
   /**
@@ -800,6 +884,7 @@ private[kafka] object Processor {
 
   private[network] def parseRequestHeader(apiVersionManager: ApiVersionManager, buffer: ByteBuffer): RequestHeader = {
     val header = RequestHeader.parse(buffer)
+    
     if (apiVersionManager.isApiEnabled(header.apiKey, header.apiVersion)) {
       header
     } else if (header.isApiVersionSupported()) {
@@ -808,6 +893,7 @@ private[kafka] object Processor {
       throw new UnsupportedVersionException(s"Received request for api with key ${header.apiKey.id} (${header.apiKey().name}) and unsupported version ${header.apiVersion}")
     }
   }
+
 }
 
 /**
@@ -1047,6 +1133,8 @@ private[kafka] class Processor(
 
                 val req = new RequestChannel.Request(processor = id, context = context,
                   startTimeNanos = nowNanos, memoryPool, receive.payload, requestChannel.metrics, None)
+                if (header.apiKey == ApiKeys.PRODUCE)
+                  println(s"isPrivilegedListener = ${req.context.fromPrivilegedListener}")
 
                 // KIP-511: ApiVersionsRequest is intercepted here to catch the client software name
                 // and version. It is done here to avoid wiring things up to the api layer.
@@ -1058,6 +1146,7 @@ private[kafka] class Processor(
                       apiVersionsRequest.data.clientSoftwareVersion))
                   }
                 }
+
                 requestChannel.sendRequest(req)
                 selector.mute(connectionId)
                 handleChannelMuteEvent(connectionId, ChannelMuteEvent.REQUEST_RECEIVED)

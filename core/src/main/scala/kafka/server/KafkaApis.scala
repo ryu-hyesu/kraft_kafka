@@ -79,6 +79,9 @@ import scala.collection.mutable.ArrayBuffer
 import scala.collection.{Map, Seq, Set, mutable}
 import scala.jdk.CollectionConverters._
 
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+
 /**
  * Logic to handle the various Kafka requests
  */
@@ -374,6 +377,12 @@ class KafkaApis(val requestChannel: RequestChannel,
    */
   def handleProduceRequest(request: RequestChannel.Request, requestLocal: RequestLocal): Unit = {
     val produceRequest = request.body[ProduceRequest]
+
+    val now = LocalDateTime.now()
+    val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+    val formattedTime = now.format(formatter)
+    println(s"[$formattedTime] produceRequest : ${produceRequest}")
+    println("")
 
     if (RequestUtils.hasTransactionalRecords(produceRequest)) {
       val isAuthorizedTransactional = produceRequest.transactionalId != null &&
@@ -1472,6 +1481,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     // the callback for sending a DeleteRecordsResponse
     def sendResponseCallback(authorizedTopicResponses: Map[TopicPartition, DeleteRecordsPartitionResult]): Unit = {
       val mergedResponseStatus = authorizedTopicResponses ++ unauthorizedTopicResponses ++ nonExistingTopicResponses
+      println(s"sendResponseCallback : ${mergedResponseStatus}")
       mergedResponseStatus.foreachEntry { (topicPartition, status) =>
         if (status.errorCode != Errors.NONE.code) {
           debug("DeleteRecordsRequest with correlation id %d from client %s on partition %s failed due to %s".format(

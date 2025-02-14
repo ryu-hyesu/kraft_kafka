@@ -521,6 +521,7 @@ class BrokerServer(
         new AclPublisher(
           config.nodeId,
           sharedServer.metadataPublishingFaultHandler,
+
           "broker",
           authorizer
         ),

@@ -98,6 +98,7 @@ object ForwardingManager {
 
   private[server] def buildEnvelopeRequest(context: RequestContext,
                                            forwardRequestBuffer: ByteBuffer): EnvelopeRequest.Builder = {
+    println(s"forwareding : ${context.header.apiKey}")
     val principalSerde = context.principalSerde.toScala.getOrElse(
       throw new IllegalArgumentException(s"Cannot deserialize principal from request context $context " +
         "since there is no serde defined")

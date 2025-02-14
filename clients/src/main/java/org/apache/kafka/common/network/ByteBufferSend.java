@@ -63,6 +63,8 @@ public class ByteBufferSend implements Send {
         return written;
     }
 
+    public ByteBuffer[] getBuffers() { return buffers; }
+
     public long remaining() {
         return remaining;
     }

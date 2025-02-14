@@ -466,6 +466,7 @@ class RequestChannel(val queueSize: Int,
       callbackRequest
     else {
       val request = requestQueue.poll(timeout, TimeUnit.MILLISECONDS)
+      // println(s"receive request : ${request}")
       request match {
         case WakeupRequest => callbackQueue.poll()
         case _ => request

@@ -56,6 +56,11 @@ import org.apache.kafka.common.requests.RequestHeader;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
 
+import org.apache.kafka.common.network.ByteBufferSend;
+import org.apache.kafka.common.network.Send;
+import org.apache.kafka.clients.producer.SharedMemoryManager;
+import java.nio.ByteBuffer;
+
 import org.slf4j.Logger;
 
 import java.io.IOException;
@@ -899,8 +904,47 @@ public class Sender implements Runnable {
         String nodeId = Integer.toString(destination);
         ClientRequest clientRequest = client.newClientRequest(nodeId, requestBuilder, now, acks != 0,
                 requestTimeoutMs, callback);
-        client.send(clientRequest, now);
+
+        AbstractRequest request = requestBuilder.build(requestBuilder.latestAllowedVersion());
+        RequestHeader header = clientRequest.makeHeader(request.version());
+        Send send = request.toSend(header);
+
+        if (send instanceof ByteBufferSend) {
+            ByteBufferSend bufferData = (ByteBufferSend) send;
+            // 전체 데이터를 저장할 하나의 directBuffer 준비
+            int totalCapacity = 0;
+            for(ByteBuffer buffer : bufferData.getBuffers()) {
+                totalCapacity += buffer.remaining();  // 전체 크기 계산
+            }
+
+            // 전체 데이터를 담을 directBuffer 생성
+            ByteBuffer directBuffer = ByteBuffer.allocateDirect(totalCapacity);
+            
+            // 각 buffer의 데이터를 directBuffer에 합침
+            for (ByteBuffer buffer : bufferData.getBuffers()) {
+                if (!buffer.isDirect()) {
+                    directBuffer.put(buffer.duplicate());  // 각 버퍼의 데이터를 directBuffer에 추가
+                }
+            }
+            
+            directBuffer.flip();  // 읽기 모드로 전환
+            
+            // 한 번에 쓰기
+            SharedMemoryManager.writeSharedMemoryByBuffer(directBuffer, directBuffer.capacity());
+            directBuffer.clear();  // directBuffer 초기화
+        }
+
+        // client.send(clientRequest, now); // NETWORK
         log.trace("Sent produce request to {}: {}", nodeId, requestBuilder);
+    }
+
+    // 16진수 출력 메서드
+    private static void printHex(ByteBuffer buffer) {
+        StringBuilder hexString = new StringBuilder();
+        while (buffer.hasRemaining()) {
+            hexString.append(String.format("%02X ", buffer.get())); // %02X로 2자리 16진수로 출력
+        }
+        System.out.println(hexString.toString());
     }
 
     /**
