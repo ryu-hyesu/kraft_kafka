@@ -3,12 +3,13 @@
 #include <sys/mman.h>   // shm_open, mmap
 #include <sys/stat.h>   // S_IRUSR, S_IWUSR
 #include <unistd.h>     // ftruncate, close
-#include <semaphore.h>  // sem_open, sem_post, sem_wait
-#include <stdio.h>      // printf, snprintf
-#include <stdint.h>     // uint64_t
-#include <string.h>     // memset, strlen
-#include "org_apache_kafka_clients_producer_SharedMemoryManager.h"
-
+#include <semaphore.h>  // sem_open, sem_post, sem_wait, sem_trywait
+#include <stdio.h>      // printf, perror
+#include <stdint.h>     // uint64_t, int types
+#include <string.h>     // memset, memcpy
+#include <stdatomic.h>  // atomic operations
+#include <stdbool.h>    // bool type
+#include "org_apache_kafka_clients_producer_SharedMemoryManager.h"  // JNI header
 
 // Shared memory structure
 #define BUF_COUNT 100
@@ -18,51 +19,47 @@
 
 typedef struct {
     char data[BUF_COUNT][BUF_SIZE]; // Shared memory data buffer
-    uint64_t prod_seq;              // Producer sequence
-    uint64_t cons_seq;              // Consumer sequence
-} shm_mem_t;
+    atomic_uint_fast64_t prod_seq;  // Producer sequence (tail)
+    atomic_uint_fast64_t cons_seq;  // Consumer sequence (head)
+} LockFreeRingBuffer;
 
 // Global shared memory pointer
-shm_mem_t *shm_base = NULL;
+static LockFreeRingBuffer *rb = NULL;
 sem_t *semaphore = NULL;
 
 // Initialize shared memory and semaphore
 int initialize_shared_memory() {
-    // Create or open shared memory
     int shm_fd = shm_open(SHARED_MEMORY_NAME, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
     if (shm_fd == -1) {
         perror("Error: Failed to open shared memory");
         return -1;
     }
 
-    // Set the size of the shared memory
-    if (ftruncate(shm_fd, sizeof(shm_mem_t)) == -1) {
+    if (ftruncate(shm_fd, sizeof(LockFreeRingBuffer)) == -1) {
         perror("Error: Failed to set shared memory size");
         close(shm_fd);
+        shm_unlink(SHARED_MEMORY_NAME);
         return -1;
     }
 
-    // Map the shared memory into the process address space
-    shm_base = (shm_mem_t *)mmap(NULL, sizeof(shm_mem_t), PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
-    if (shm_base == MAP_FAILED) {
+    rb = (LockFreeRingBuffer *)mmap(NULL, sizeof(LockFreeRingBuffer), PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+    if (rb == MAP_FAILED) {
         perror("Error: Failed to map shared memory");
         close(shm_fd);
+        shm_unlink(SHARED_MEMORY_NAME);
         return -1;
     }
-    close(shm_fd); // Shared memory file descriptor no longer needed
+    close(shm_fd);
 
-    // Initialize the shared memory content (first-time creation only)
-    if (shm_base->prod_seq == 0 && shm_base->cons_seq == 0) {
-        memset(shm_base->data, 0, sizeof(shm_base->data));
-        shm_base->prod_seq = 0;
-        shm_base->cons_seq = 0;
-    }
+    // Shared memory 초기화 (최초 실행 시)
+    memset(rb, 0, sizeof(LockFreeRingBuffer));
 
-    // Create or open a semaphore for synchronization
+    // 세마포어 생성 또는 열기
     semaphore = sem_open(SEMAPHORE_NAME, O_CREAT, S_IRUSR | S_IWUSR, 0);
     if (semaphore == SEM_FAILED) {
         perror("Error: Failed to open semaphore");
-        munmap(shm_base, sizeof(shm_mem_t));
+        munmap(rb, sizeof(LockFreeRingBuffer));
+        shm_unlink(SHARED_MEMORY_NAME);
         return -1;
     }
 
@@ -71,8 +68,8 @@ int initialize_shared_memory() {
 
 // Cleanup shared memory and semaphore
 void cleanup_shared_memory() {
-    if (shm_base) {
-        munmap(shm_base, sizeof(shm_mem_t));
+    if (rb) {
+        munmap(rb, sizeof(LockFreeRingBuffer));
     }
     if (semaphore) {
         sem_close(semaphore);
@@ -81,84 +78,73 @@ void cleanup_shared_memory() {
     shm_unlink(SHARED_MEMORY_NAME);
 }
 
-JNIEXPORT void JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryManager_writeSharedMemoryByBuffer
-(JNIEnv *env, jobject obj, jobject buffer, jint length) {
-    if (!buffer) {
-        printf("Error: Buffer is null.\n");
-        return;
+// WRITE (enqueue)
+bool buffer_try_enqueue(LockFreeRingBuffer *rb, const char *data, int length) {
+    uint64_t tail = atomic_load_explicit(&rb->prod_seq, memory_order_acquire);
+    uint64_t head = atomic_load_explicit(&rb->cons_seq, memory_order_acquire);
+
+    if ((tail + 1) % BUF_COUNT == head) {
+        return false;  // 버퍼가 가득 참
     }
 
-    // Direct ByteBuffer의 native 주소 가져오기
-    void *nativeBuffer = (*env)->GetDirectBufferAddress(env, buffer);
-    if (!nativeBuffer) {
-        printf("Error: Failed to get direct buffer address. Native buffer is null.\n");
-        return;
-    }
+    const char *actual_data = data + 4;
+    int actual_length = length - 4;
 
-    // 유효한 길이인지 검사
-    if (length <= 0 || length > BUF_SIZE) {
-        printf("Error: Invalid buffer length: %d, BUF_SIZE: %d\n", length, BUF_SIZE);
-        return;
-    }
+    memcpy(rb->data[tail % BUF_COUNT], &actual_length, sizeof(int));
+    memcpy(rb->data[tail % BUF_COUNT] + sizeof(int), actual_data, actual_length);
 
-    if (!shm_base) {
-        if (initialize_shared_memory() != 0) {
-            printf("Error: Failed to initialize shared memory.\n");
-            return;
-        }
-    }
+    atomic_thread_fence(memory_order_release); // 현재 스레드가 수행한 모든 이전 쓰기 연산이 완료되었을 때 연산이 실행됨
+    atomic_fetch_add_explicit(&rb->prod_seq, 1, memory_order_release); // memory_order-release 현재 스레드가 쓰기 연산을 먼저 수행하도록 보장함 & 다른 스레드(memory_order_acquire)가 읽을 때 이 값이 최신 상태임을 보장함
 
-    // Remove first 4 bytes and get actual data
-    char *data = (char *)nativeBuffer + 4;
-    int data_length = length - 4;
-
-    // Get write index
-    uint64_t index = shm_base->prod_seq % BUF_COUNT;
-
-    // Save data size at the beginning of the buffer
-    memcpy(shm_base->data[index], &data_length, sizeof(int));
-
-    // Copy actual data after the size metadata
-    memcpy(shm_base->data[index] + sizeof(int), data, data_length);
-
-    // 생산자 시퀀스 증가
-    shm_base->prod_seq++;
-
-    // 소비자 알림
-    if (sem_post(semaphore) == -1) {
-        perror("sem_post failed");
-    }
+    return true;
 }
 
+// Java -> C (Write)
+JNIEXPORT void JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryManager_writeSharedMemoryByBuffer
+(JNIEnv *env, jobject obj, jobject buffer, jint length) {
+    if (!buffer) return;
+
+    void *nativeBuffer = (*env)->GetDirectBufferAddress(env, buffer);
+    if (!nativeBuffer) return;
+
+    if (!rb && initialize_shared_memory() != 0) return;
+
+    if (!buffer_try_enqueue(rb, (const char *)nativeBuffer, length)) return;
+
+    sem_post(semaphore); // 읽기 시 세마포어에 알림 전송
+}
+
+// Java -> C (Read)
 JNIEXPORT jobject JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryManager_readSharedMemoryByBuffer
 (JNIEnv *env, jobject obj) {
-    if (!shm_base) {
-        if (initialize_shared_memory() != 0) {
-            printf("Failed to initialize shared memory.\n");
-            return NULL;
-        }
-    }
+    if (!rb && initialize_shared_memory() != 0) return NULL;
 
-    // ✅ Non-blocking 방식 적용: 데이터가 없으면 즉시 return
+    // 세마포어를 통해 현재 쓰기 작업이 이루어지지 않았음을 확인
     if (sem_trywait(semaphore) == -1) {
-        return NULL;  // 데이터가 없으면 대기하지 않고 즉시 반환
-    }
-
-    if (shm_base->cons_seq >= shm_base->prod_seq) {
         return NULL;
     }
 
-    // Get read index
-    uint64_t index = shm_base->cons_seq % BUF_COUNT;
+    uint64_t head = atomic_load_explicit(&rb->cons_seq, memory_order_acquire);
+    uint64_t tail = atomic_load_explicit(&rb->prod_seq, memory_order_acquire); // 현재 스레드가 읽기 연산을 먼저 수행하도록 보장한다.
 
-    // Read data size
+    if (head == tail) {
+        sem_post(semaphore);
+        return NULL;
+    }
+
+    uint64_t index = head % BUF_COUNT;
+
     int data_length;
-    memcpy(&data_length, shm_base->data[index], sizeof(int));
+    memcpy(&data_length, rb->data[index], sizeof(int));
 
-    // Allocate Java ByteBuffer
-    jobject byteBuffer = (*env)->NewDirectByteBuffer(env, shm_base->data[index] + sizeof(int), data_length);
+    jobject byteBuffer = (*env)->NewDirectByteBuffer(env, rb->data[index] + sizeof(int), data_length);
+    if (!byteBuffer) {
+        sem_post(semaphore);
+        return NULL;
+    }
 
-    shm_base->cons_seq++;
+    atomic_thread_fence(memory_order_release);
+    atomic_store_explicit(&rb->cons_seq, head + 1, memory_order_release);
 
     return byteBuffer;
 }

@@ -1133,8 +1133,6 @@ private[kafka] class Processor(
 
                 val req = new RequestChannel.Request(processor = id, context = context,
                   startTimeNanos = nowNanos, memoryPool, receive.payload, requestChannel.metrics, None)
-                if (header.apiKey == ApiKeys.PRODUCE)
-                  println(s"isPrivilegedListener = ${req.context.fromPrivilegedListener}")
 
                 // KIP-511: ApiVersionsRequest is intercepted here to catch the client software name
                 // and version. It is done here to avoid wiring things up to the api layer.
