@@ -18,7 +18,7 @@
 package org.apache.kafka.clients.producer;
 import java.nio.ByteBuffer;
 
-public class SharedMemoryManager {
+public class SharedMemoryProducer {
 
     static {
         System.loadLibrary("sharedmemory");
@@ -26,5 +26,4 @@ public class SharedMemoryManager {
 
     public static native void writeSharedMemoryByBuffer(ByteBuffer content, int length);
     public static native ByteBuffer readSharedMemoryByBuffer();
-
 }

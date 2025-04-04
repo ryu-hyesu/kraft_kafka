@@ -58,7 +58,7 @@ import org.apache.kafka.common.utils.Time;
 
 import org.apache.kafka.common.network.ByteBufferSend;
 import org.apache.kafka.common.network.Send;
-import org.apache.kafka.clients.producer.SharedMemoryManager;
+import org.apache.kafka.clients.producer.SharedMemoryProducer;
 import java.nio.ByteBuffer;
 
 import org.slf4j.Logger;
@@ -930,7 +930,7 @@ public class Sender implements Runnable {
             directBuffer.flip();  // 읽기 모드로 전환
             
             // 한 번에 쓰기
-            SharedMemoryManager.writeSharedMemoryByBuffer(directBuffer, directBuffer.capacity());
+            SharedMemoryProducer.writeSharedMemoryByBuffer(directBuffer, directBuffer.capacity());
             directBuffer.clear();  // directBuffer 초기화
         }
 

@@ -54,7 +54,7 @@ import org.apache.kafka.server.quota.QuotaUtils
 import org.apache.kafka.server.util.FutureUtils
 import org.slf4j.event.Level
 
-import org.apache.kafka.clients.producer.SharedMemoryManager
+import org.apache.kafka.clients.producer.SharedMemoryProducer
 
 import scala.collection._
 import scala.collection.mutable.ArrayBuffer
@@ -261,7 +261,7 @@ class SocketServer(
 
     override def run(): Unit = {
       while (running) {
-          val rawData = SharedMemoryManager.readSharedMemoryByBuffer()
+          val rawData = SharedMemoryProducer.readSharedMemoryByBuffer()
           if (rawData != null) {
             val header = RequestHeader.parse(rawData)
             val nowNanos = time.nanoseconds()

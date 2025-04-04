@@ -98,6 +98,8 @@ import static org.apache.kafka.common.utils.Utils.closeQuietly;
 import static org.apache.kafka.common.utils.Utils.isBlank;
 import static org.apache.kafka.common.utils.Utils.swallow;
 
+import org.apache.kafka.clients.consumer.SharedMemoryConsumer;
+
 /**
  * A client that consumes records from a Kafka cluster using the {@link GroupProtocol#CLASSIC classic group protocol}.
  * In this implementation, all network I/O happens in the thread of the application making the call.
@@ -639,6 +641,11 @@ public class ClassicKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
 
                 // try to update assignment metadata BUT do not need to block on the timer for join group
                 updateAssignmentMetadataIfNeeded(timer, false);
+
+                String data = SharedMemoryConsumer.readSharedMemoryByBuffer();
+                if (data != null) {
+                    System.out.println(data);
+                }
 
                 final Fetch<K, V> fetch = pollForFetches(timer);
                 if (!fetch.isEmpty()) {
