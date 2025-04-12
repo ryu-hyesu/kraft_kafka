@@ -5,14 +5,9 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <string.h>
-#include <stdatomic.h>
 #include <stdlib.h>
 
-
-LockFreeRingBuffer *rb = NULL;
-sem_t *semaphore = NULL;
-
-int initialize_shared_memory(const char *shm_name, const char *sem_name, bool create) {
+int initialize_shared_memory(SharedMemoryHandle *handle, const char *shm_name, const char *sem_name, bool create) {
     int flags = create ? (O_CREAT | O_RDWR) : O_RDWR;
     int shm_fd = shm_open(shm_name, flags, S_IRUSR | S_IWUSR);
     if (shm_fd == -1) {
@@ -26,36 +21,37 @@ int initialize_shared_memory(const char *shm_name, const char *sem_name, bool cr
         return -1;
     }
 
-    rb = mmap(NULL, sizeof(LockFreeRingBuffer), PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
-    if (rb == MAP_FAILED) {
+    void *addr = mmap(NULL, sizeof(LockFreeRingBuffer), PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+    if (addr == MAP_FAILED) {
         perror("mmap");
         close(shm_fd);
         return -1;
     }
     close(shm_fd);
 
+    handle->rb = (LockFreeRingBuffer *)addr;
     if (create) {
-        memset(rb, 0, sizeof(LockFreeRingBuffer));
+        memset(handle->rb, 0, sizeof(LockFreeRingBuffer));
     }
 
-    semaphore = sem_open(sem_name, create ? O_CREAT : 0, S_IRUSR | S_IWUSR, 0);
-    if (semaphore == SEM_FAILED) {
+    handle->semaphore = sem_open(sem_name, create ? O_CREAT : 0, S_IRUSR | S_IWUSR, 0);
+    if (handle->semaphore == SEM_FAILED) {
         perror("sem_open");
-        munmap(rb, sizeof(LockFreeRingBuffer));
+        munmap(handle->rb, sizeof(LockFreeRingBuffer));
         return -1;
     }
 
     return 0;
 }
 
-void cleanup_shared_memory(const char *shm_name, const char *sem_name) {
-    if (rb) {
-        munmap(rb, sizeof(LockFreeRingBuffer));
-        rb = NULL;
+void cleanup_shared_memory(SharedMemoryHandle *handle, const char *shm_name, const char *sem_name) {
+    if (handle->rb) {
+        munmap(handle->rb, sizeof(LockFreeRingBuffer));
+        handle->rb = NULL;
     }
-    if (semaphore) {
-        sem_close(semaphore);
-        semaphore = NULL;
+    if (handle->semaphore) {
+        sem_close(handle->semaphore);
+        handle->semaphore = NULL;
     }
     sem_unlink(sem_name);
     shm_unlink(shm_name);

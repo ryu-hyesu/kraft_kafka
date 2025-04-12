@@ -1,3 +1,14 @@
+error id: `<none>`.
+file://<WORKSPACE>/core/src/main/scala/kafka/server/KafkaApis.scala
+empty definition using pc, found symbol in pc: `<none>`.
+empty definition using semanticdb
+empty definition using fallback
+non-local guesses:
+
+offset: 34505
+uri: file://<WORKSPACE>/core/src/main/scala/kafka/server/KafkaApis.scala
+text:
+```scala
 /**
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -79,9 +90,8 @@ import scala.collection.mutable.ArrayBuffer
 import scala.collection.{Map, Seq, Set, mutable}
 import scala.jdk.CollectionConverters._
 
-// import java.nio.ByteBuffer;
+import java.nio.ByteBuffer
 import org.apache.kafka.clients.consumer.SharedMemoryConsumer
-import org.apache.kafka.common.utils.Utils
 
 /**
  * Logic to handle the various Kafka requests
@@ -616,6 +626,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           .setRecords(data.records)
           .setPreferredReadReplica(data.preferredReadReplica.orElse(FetchResponse.INVALID_PREFERRED_REPLICA_ID))
 
+        // Write Shared Memory
         if (data.records != null && data.records.sizeInBytes > 0) {
           try {
             val topic = tp.topic
@@ -623,47 +634,35 @@ class KafkaApis(val requestChannel: RequestChannel,
             val hw = data.highWatermark
             val lso = data.lastStableOffset.orElse(-1L)
 
-            val fileRecords = data.records.asInstanceOf[FileRecords]
+            // records 직렬화
+            @@val memoryRecords = data.records.asInstanceOf[org.apache.kafka.common.record.MemoryRecords]
+memoryRecords.writeTo(recordBuffer)
 
-            fileRecords.batches().asScala.foreach { batch =>
-              val baseOffset = batch.baseOffset()
-              val lastOffset = batch.lastOffset()
+            recordBuffer.flip()
+            val recordsBytes = new Array[Byte](recordBuffer.remaining())
+            recordBuffer.get(recordsBytes)
 
-              println(s"[RecordBatch] baseOffset=$baseOffset, lastOffset=$lastOffset")
+            // 마지막 offset 계산
+            val lastOffset = data.records.batches().asScala.lastOption.map(_.lastOffset()).getOrElse(-1L)
+            val nextOffset = lastOffset + 1
 
-              batch.iterator().asScala.foreach { record =>
-                val offset = record.offset()
-                val timestamp = record.timestamp()
-
-                val keyBytes = if (record.hasKey) Utils.toArray(record.key()) else null
-                val valueBytes = if (record.hasValue) Utils.toArray(record.value()) else null
-
-                val keyStr = Option(keyBytes).map(bytes => new String(bytes, "UTF-8")).getOrElse("null")
-                val valueStr = Option(valueBytes).map(bytes => new String(bytes, "UTF-8")).getOrElse("null")
-
-                println(s"  [Record] offset=$offset, key=$keyStr, value=$valueStr, timestamp=$timestamp")
-
-                if (valueBytes != null && valueBytes.nonEmpty) {
-                  SharedMemoryConsumer.writeSharedMemoryByBuffer(
-                    topic,
-                    partition,
-                    keyBytes,
-                    valueBytes,
-                    timestamp,
-                    offset + 1, // next offset
-                    hw,
-                    lso
-                  )
-                }
-              }
-            }
+            // SharedMemoryWriter.writeConsumerFormat(...) 는 여러분이 정의
+            SharedMemoryConsumer.writeSharedMemoryByBuffer(
+              topic = topic,
+              partition = partition,
+              records = recordsBytes,
+              nextOffset = nextOffset,
+              highWatermark = hw,
+              lastStableOffset = lso
+            )
 
           } catch {
             case e: Throwable =>
-              logger.warn(s"[SharedMemory] Write failed for $tp", e)
+              logger.warn(s"SharedMemory write failed for $tp", e)
           }
         }
-        
+
+
         if (versionId >= 16) {
           data.error match {
             case Errors.NOT_LEADER_OR_FOLLOWER | Errors.FENCED_LEADER_EPOCH =>
@@ -739,17 +738,7 @@ class KafkaApis(val requestChannel: RequestChannel,
 
         recordBytesOutMetric(fetchResponse)
         // Send the response immediately.
-        // val hasRecords = fetchResponse.data().responses().asScala.exists { topicResponse =>
-        //   topicResponse.partitions().asScala.exists { partitionData =>
-        //     val records = partitionData.records()
-        //     records != null && records.sizeInBytes() > 0
-        //   }
-        // }
-
-        // if (hasRecords) {
-        //   println(s"sendResponse: request = $request, fetchResponse = $fetchResponse")
-        // }
-
+        // println("sendResponse, request : " + request + ", fetchResponse : " + fetchResponse)
         requestChannel.sendResponse(request, fetchResponse, None)
       }
     }
@@ -3543,3 +3532,10 @@ object KafkaApis {
       .iterator.asScala.filter(element => element.getKey.topicPartition.topic != null && quota.isThrottled(element.getKey.topicPartition)).asJava)
   }
 }
+
+```
+
+
+#### Short summary: 
+
+empty definition using pc, found symbol in pc: `<none>`.

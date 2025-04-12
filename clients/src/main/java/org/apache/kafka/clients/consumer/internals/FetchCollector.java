@@ -16,10 +16,19 @@
  */
 package org.apache.kafka.clients.consumer.internals;
 
+import java.util.ArrayDeque;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Queue;
+
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.consumer.OffsetOutOfRangeException;
+import static org.apache.kafka.clients.consumer.internals.FetchUtils.requestMetadataUpdate;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.RecordTooLargeException;
@@ -30,18 +39,7 @@ import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.requests.FetchResponse;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
-
 import org.slf4j.Logger;
-
-import java.util.ArrayDeque;
-import java.util.Collections;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Queue;
-
-import static org.apache.kafka.clients.consumer.internals.FetchUtils.requestMetadataUpdate;
 
 /**
  * {@code FetchCollector} operates at the {@link RecordBatch} level, as that is what is stored in the
@@ -101,6 +99,7 @@ public class FetchCollector<K, V> {
             while (recordsRemaining > 0) {
                 final CompletedFetch nextInLineFetch = fetchBuffer.nextInLineFetch();
 
+                // network
                 if (nextInLineFetch == null || nextInLineFetch.isConsumed()) {
                     final CompletedFetch completedFetch = fetchBuffer.peek();
 

@@ -1,3 +1,16 @@
+file://<WORKSPACE>/clients/src/main/java/org/apache/kafka/clients/consumer/internals/ClassicKafkaConsumer.java
+### java.util.NoSuchElementException: next on empty iterator
+
+occurred in the presentation compiler.
+
+presentation compiler configuration:
+
+
+action parameters:
+offset: 31575
+uri: file://<WORKSPACE>/clients/src/main/java/org/apache/kafka/clients/consumer/internals/ClassicKafkaConsumer.java
+text:
+```scala
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements. See the NOTICE file distributed with
@@ -49,7 +62,6 @@ import org.apache.kafka.clients.consumer.ConsumerGroupMetadata;
 import org.apache.kafka.clients.consumer.ConsumerInterceptor;
 import org.apache.kafka.clients.consumer.ConsumerPartitionAssignor;
 import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.GroupProtocol;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
@@ -57,7 +69,6 @@ import org.apache.kafka.clients.consumer.NoOffsetForPartitionException;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.consumer.OffsetAndTimestamp;
 import org.apache.kafka.clients.consumer.OffsetCommitCallback;
-import org.apache.kafka.clients.consumer.SharedMemoryConsumer;
 import org.apache.kafka.clients.consumer.SubscriptionPattern;
 import static org.apache.kafka.clients.consumer.internals.ConsumerUtils.CONSUMER_JMX_PREFIX;
 import static org.apache.kafka.clients.consumer.internals.ConsumerUtils.CONSUMER_METRIC_GROUP_PREFIX;
@@ -640,14 +651,10 @@ public class ClassicKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
                 // try to update assignment metadata BUT do not need to block on the timer for join group
                 updateAssignmentMetadataIfNeeded(timer, false);
 
-                ConsumerRecords<K, V> shmRecords = SharedMemoryConsumer.readSharedMemoryBySharedMessage(
-                    deserializers.keyDeserializer(),
-                    deserializers.valueDeserializer()
-                );
-
-                if (shmRecords == null) {
-                    System.out.println(shmRecords.toString());
-                }
+                // String data = SharedMemoryConsumer.readSharedMemoryByBuffer();
+                // if (data != null) {
+                //     System.out.println(data);
+                // }
 
                 final Fetch<K, V> fetch = pollForFetches(timer);
                 if (!fetch.isEmpty()) {
@@ -664,16 +671,9 @@ public class ClassicKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
                     if (fetch.records().isEmpty()) {
                         log.trace("Returning empty records from `poll()` "
                                 + "since the consumer's position has advanced for at least one topic partition");
-                    }
+                 @@   }
 
-                    for (Map.Entry<TopicPartition, List<ConsumerRecord<K, V>>> entry : fetch.records().entrySet()) {
-                        TopicPartition tp = entry.getKey();
-                        List<ConsumerRecord<K, V>> records = entry.getValue();
-
-                        for (ConsumerRecord<K, V> record : records) {
-                            System.out.printf(record.toString());
-                        }
-                    }
+                    System.out.printf("records: %s, nextOffsets: %s%n", fetch.records(), fetch.nextOffsets());
 
                     return this.interceptors.onConsume(new ConsumerRecords<>(fetch.records(), fetch.nextOffsets()));
                 }
@@ -1306,3 +1306,25 @@ public class ClassicKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
         return updateAssignmentMetadataIfNeeded(timer, true);
     }
 }
+
+```
+
+
+
+#### Error stacktrace:
+
+```
+scala.collection.Iterator$$anon$19.next(Iterator.scala:973)
+	scala.collection.Iterator$$anon$19.next(Iterator.scala:971)
+	scala.collection.mutable.MutationTracker$CheckedIterator.next(MutationTracker.scala:76)
+	scala.collection.IterableOps.head(Iterable.scala:222)
+	scala.collection.IterableOps.head$(Iterable.scala:222)
+	scala.collection.AbstractIterable.head(Iterable.scala:935)
+	dotty.tools.dotc.interactive.InteractiveDriver.run(InteractiveDriver.scala:164)
+	dotty.tools.pc.CachingDriver.run(CachingDriver.scala:45)
+	dotty.tools.pc.HoverProvider$.hover(HoverProvider.scala:40)
+	dotty.tools.pc.ScalaPresentationCompiler.hover$$anonfun$1(ScalaPresentationCompiler.scala:389)
+```
+#### Short summary: 
+
+java.util.NoSuchElementException: next on empty iterator
