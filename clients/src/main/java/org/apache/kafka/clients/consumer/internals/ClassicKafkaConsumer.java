@@ -49,7 +49,6 @@ import org.apache.kafka.clients.consumer.ConsumerGroupMetadata;
 import org.apache.kafka.clients.consumer.ConsumerInterceptor;
 import org.apache.kafka.clients.consumer.ConsumerPartitionAssignor;
 import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.GroupProtocol;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
@@ -645,38 +644,42 @@ public class ClassicKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
                     deserializers.valueDeserializer()
                 );
 
-                if (shmRecords == null) {
-                    System.out.println(shmRecords.toString());
+                if (shmRecords != null && !shmRecords.isEmpty()) {
+                    System.out.println("✅ SharedMemory ConsumerRecords detected:");
+                    return this.interceptors.onConsume(shmRecords);
                 }
+                
 
-                final Fetch<K, V> fetch = pollForFetches(timer);
-                if (!fetch.isEmpty()) {
-                    // before returning the fetched records, we can send off the next round of fetches
-                    // and avoid block waiting for their responses to enable pipelining while the user
-                    // is handling the fetched records.
-                    //
-                    // NOTE: since the consumed position has already been updated, we must not allow
-                    // wakeups or any other errors to be triggered prior to returning the fetched records.
-                    if (sendFetches() > 0 || client.hasPendingRequests()) {
-                        client.transmitSends();
-                    }
+                // final Fetch<K, V> fetch = pollForFetches(timer);
+                // if (!fetch.isEmpty()) {
+                //     // before returning the fetched records, we can send off the next round of fetches
+                //     // and avoid block waiting for their responses to enable pipelining while the user
+                //     // is handling the fetched records.
+                //     //
+                //     // NOTE: since the consumed position has already been updated, we must not allow
+                //     // wakeups or any other errors to be triggered prior to returning the fetched records.
+                //     if (sendFetches() > 0 || client.hasPendingRequests()) {
+                //         client.transmitSends();
+                //     }
 
-                    if (fetch.records().isEmpty()) {
-                        log.trace("Returning empty records from `poll()` "
-                                + "since the consumer's position has advanced for at least one topic partition");
-                    }
+                //     if (fetch.records().isEmpty()) {
+                //         log.trace("Returning empty records from `poll()` "
+                //                 + "since the consumer's position has advanced for at least one topic partition");
+                //     }
 
-                    for (Map.Entry<TopicPartition, List<ConsumerRecord<K, V>>> entry : fetch.records().entrySet()) {
-                        TopicPartition tp = entry.getKey();
-                        List<ConsumerRecord<K, V>> records = entry.getValue();
+                //     // for (Map.Entry<TopicPartition, List<ConsumerRecord<K, V>>> entry : fetch.records().entrySet()) {
+                //     //     TopicPartition tp = entry.getKey();
+                //     //     List<ConsumerRecord<K, V>> records = entry.getValue();
 
-                        for (ConsumerRecord<K, V> record : records) {
-                            System.out.printf(record.toString());
-                        }
-                    }
+                //     //     for (ConsumerRecord<K, V> record : records) {
+                //     //         System.out.printf("network : " + record.toString());
+                //     //     }
+                //     // }
 
-                    return this.interceptors.onConsume(new ConsumerRecords<>(fetch.records(), fetch.nextOffsets()));
-                }
+                //     // System.out.printf(new ConsumerRecords<>(fetch.records(), fetch.nextOffsets()).toString());
+
+                //     return this.interceptors.onConsume(new ConsumerRecords<>(fetch.records(), fetch.nextOffsets()));
+                // }
             } while (timer.notExpired());
 
             return ConsumerRecords.empty();

@@ -19,9 +19,15 @@
 
  import java.nio.ByteBuffer;
  import java.nio.charset.StandardCharsets;
+ import java.util.List;
+ import java.util.Map;
+ import java.util.Optional;
 
+ import org.apache.kafka.common.TopicPartition;
+ import org.apache.kafka.common.header.internals.RecordHeaders;
+import org.apache.kafka.common.record.TimestampType;
  import org.apache.kafka.common.serialization.Deserializer;
- 
+
  public class SharedMemoryConsumer {
  
     static {
@@ -70,6 +76,7 @@
                             8;
 
         int totalSize =
+                4 +                     // dump
                 4 + topicBytes.length + // topic length + topic
                 4 +                     // partition
                 8 +                     // nextOffset
@@ -78,6 +85,9 @@
                 4 + recordBodySize;     // record length + record data
 
         ByteBuffer buffer = ByteBuffer.allocateDirect(totalSize);
+
+        // dump
+        buffer.putInt(0);
 
         // topic
         buffer.putInt(topicBytes.length);
@@ -125,65 +135,62 @@
              Deserializer<V> valueDeserializer
      ) {
          ByteBuffer buffer = readSharedMemoryByBuffer();
-
-         if (buffer != null)
-            dumpBuffer(buffer, 400);
-
-         return ConsumerRecords.empty();
          
-        //  if (buffer == null || buffer.remaining() < 32) return ConsumerRecords.empty();
+         if (buffer == null || buffer.remaining() < 32) return ConsumerRecords.empty();
          
-        //  buffer.rewind();
+         buffer.rewind();
  
-        //  int topicLen = buffer.getInt();
-        //  byte[] topicBytes = new byte[topicLen];
-        //  buffer.get(topicBytes);
-        //  String topic = new String(topicBytes, StandardCharsets.UTF_8);
+         int topicLen = buffer.getInt();
+         byte[] topicBytes = new byte[topicLen];
+         buffer.get(topicBytes);
+         String topic = new String(topicBytes, StandardCharsets.UTF_8);
  
-        //  int partition = buffer.getInt();
-        //  long nextOffset = buffer.getLong();
-        //  long highWatermark = buffer.getLong(); // unused but parsed
-        //  long lastStableOffset = buffer.getLong(); // unused but parsed
+         int partition = buffer.getInt();
+         long nextOffset = buffer.getLong();
+         long highWatermark = buffer.getLong(); // unused but parsed
+         long lastStableOffset = buffer.getLong(); // unused but parsed
  
-        //  int recordsLen = buffer.getInt();
-        //  ByteBuffer recordsBuf = buffer.slice();
-        //  recordsBuf.limit(recordsLen);
-        //  recordsBuf.rewind();
+         int recordsLen = buffer.getInt();
+         ByteBuffer recordsBuf = buffer.slice();
+         recordsBuf.limit(recordsLen);
+         recordsBuf.rewind();
  
-        //  // FORMAT: [keyLen][keyBytes][valueLen][valueBytes][timestamp]
-        //  int keyLen = recordsBuf.getInt();
-        //  byte[] keyBytes = keyLen >= 0 ? new byte[keyLen] : null;
-        //  if (keyLen > 0) recordsBuf.get(keyBytes);
+         // FORMAT: [keyLen][keyBytes][valueLen][valueBytes][timestamp]
+         int keyLen = recordsBuf.getInt();
+         byte[] keyBytes = keyLen >= 0 ? new byte[keyLen] : null;
+         if (keyLen > 0) recordsBuf.get(keyBytes);
  
-        //  int valueLen = recordsBuf.getInt();
-        //  byte[] valueBytes = valueLen >= 0 ? new byte[valueLen] : null;
-        //  if (valueLen > 0) recordsBuf.get(valueBytes);
+         int valueLen = recordsBuf.getInt();
+         byte[] valueBytes = valueLen >= 0 ? new byte[valueLen] : null;
+         if (valueLen > 0) recordsBuf.get(valueBytes);
  
-        //  long timestamp = recordsBuf.getLong();
+         long timestamp = recordsBuf.getLong();
  
-        //  K key = keyBytes != null ? keyDeserializer.deserialize(topic, keyBytes) : null;
-        //  V value = valueBytes != null ? valueDeserializer.deserialize(topic, valueBytes) : null;
+         K key = keyBytes != null ? keyDeserializer.deserialize(topic, keyBytes) : null;
+         V value = valueBytes != null ? valueDeserializer.deserialize(topic, valueBytes) : null;
  
-        //  ConsumerRecord<K, V> record = new ConsumerRecord<>(
-        //          topic,
-        //          partition,
-        //          nextOffset - 1,
-        //          timestamp,
-        //          TimestampType.CREATE_TIME,
-        //          keyLen,
-        //          valueLen,
-        //          key,
-        //          value,
-        //          new RecordHeaders(),
-        //          Optional.empty(),
-        //          Optional.empty()
-        //  );
+         ConsumerRecord<K, V> record = new ConsumerRecord<>(
+                 topic,
+                 partition,
+                 nextOffset - 1,
+                 timestamp,
+                 TimestampType.CREATE_TIME,
+                 keyLen,
+                 valueLen,
+                 key,
+                 value,
+                 new RecordHeaders(),
+                 Optional.empty(),
+                 Optional.empty()
+         );
+
+         System.out.println("shm : " + record.toString());
  
-        //  TopicPartition tp = new TopicPartition(topic, partition);
+         TopicPartition tp = new TopicPartition(topic, partition);
  
-        //  return new ConsumerRecords<>(Map.of(tp, List.of(record)), Map.of(
-        //          tp, new OffsetAndMetadata(nextOffset)
-        //  ));
+         return new ConsumerRecords<>(Map.of(tp, List.of(record)), Map.of(
+                 tp, new OffsetAndMetadata(nextOffset)
+         ));
      }
  
      public static native void writeSharedMemoryByBuffer(ByteBuffer content, int length);
