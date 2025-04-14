@@ -644,13 +644,19 @@ public class ClassicKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
                     deserializers.valueDeserializer()
                 );
 
+                System.out.println(shmRecords.toString());
+
                 if (shmRecords != null && !shmRecords.isEmpty()) {
-                    System.out.println("✅ SharedMemory ConsumerRecords detected:");
+                    System.out.println("✅ SharedMemory ConsumerRecords detected:2");
                     return this.interceptors.onConsume(shmRecords);
                 }
                 
 
-                // final Fetch<K, V> fetch = pollForFetches(timer);
+                final Fetch<K, V> fetch = pollForFetches(timer);
+                if (!fetch.isEmpty()) {
+                    System.out.println(fetch.toString());
+                }
+
                 // if (!fetch.isEmpty()) {
                 //     // before returning the fetched records, we can send off the next round of fetches
                 //     // and avoid block waiting for their responses to enable pipelining while the user
