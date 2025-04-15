@@ -18,6 +18,7 @@ typedef struct {
 typedef struct {
     LockFreeRingBuffer *rb;
     sem_t *semaphore;
+    int event_fd;
 } SharedMemoryHandle;
 
 int initialize_shared_memory(SharedMemoryHandle *handle, const char *shm_name, const char *sem_name, bool create);

@@ -6,6 +6,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <sys/epoll.h>    // epoll_create1, epoll_ctl, epoll_wait, struct epoll_event
+#include <sys/eventfd.h>  // eventfd, EFD_NONBLOCK, EFD_SEMAPHORE
+#include <unistd.h>       // read, write
+
 
 int initialize_shared_memory(SharedMemoryHandle *handle, const char *shm_name, const char *sem_name, bool create) {
     int flags = create ? (O_CREAT | O_RDWR) : O_RDWR;
@@ -41,6 +45,26 @@ int initialize_shared_memory(SharedMemoryHandle *handle, const char *shm_name, c
         return -1;
     }
 
+    // event_fd 생성성
+    handle->event_fd = eventfd(0, EFD_NONBLOCK | EFD_SEMAPHORE);
+    if (handle->event_fd == -1) { perror("eventfd"); return -1; }
+
+    // epoll fd 생성
+    int epfd = epoll_create1(0);
+
+    // epoll fd에 등록할 이벤트 생성
+    struct epoll_event ev;
+    ev.events = EPOLLIN; // 읽을 수 있는 데이터 도착 시 감지
+    ev.data.ptr = handle;
+
+    // epoll fd에 event_fd 등록
+    if (epoll_ctl(epfd, EPOLL_CTL_ADD, handle->event_fd, &ev) == -1) {
+        perror("epoll_ctl ADD");
+        close(handle->event_fd);
+        munmap(handle->rb, sizeof(LockFreeRingBuffer)); 
+        return -1;
+    }
+
     return 0;
 }
 
@@ -53,6 +77,11 @@ void cleanup_shared_memory(SharedMemoryHandle *handle, const char *shm_name, con
         sem_close(handle->semaphore);
         handle->semaphore = NULL;
     }
+    if (handle->event_fd != -1) {
+        close(handle->event_fd);
+        handle->event_fd = -1;
+    }
+
     sem_unlink(sem_name);
     shm_unlink(shm_name);
 }
