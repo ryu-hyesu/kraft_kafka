@@ -41,7 +41,7 @@ import org.apache.kafka.common.network.KafkaChannel.ChannelMuteEvent
 import org.apache.kafka.common.network.{ChannelBuilder, ChannelBuilders, ClientInformation, KafkaChannel, ListenerName, ListenerReconfigurable, NetworkSend, Selectable, Send, ServerConnectionId, Selector => KSelector}
 import org.apache.kafka.common.protocol.ApiKeys
 import org.apache.kafka.common.requests.{ApiVersionsRequest, RequestContext, RequestHeader}
-import org.apache.kafka.common.security.auth.{KafkaPrincipal, SecurityProtocol}
+import org.apache.kafka.common.security.auth.{SecurityProtocol}
 import org.apache.kafka.common.utils.{KafkaThread, LogContext, Time, Utils}
 import org.apache.kafka.common.{Endpoint, KafkaException, MetricName, Reconfigurable}
 import org.apache.kafka.network.{ConnectionQuotaEntity, ConnectionThrottledException, SocketServerConfigs, TooManyConnectionsException}
@@ -249,7 +249,8 @@ class SocketServer(
       }
 
       running = true
-      val t = new Thread(this)
+      val t = new Thread(this)  //  this = MemoryPollingTask instance
+      t.setDaemon(true)
       thread = Some(t)
       t.start()
       println("Polling task started.")
@@ -262,39 +263,40 @@ class SocketServer(
     override def run(): Unit = {
       while (running) {
           val rawData = SharedMemoryProducer.readSharedMemoryByBuffer()
-          if (rawData != null) {
-            val header = RequestHeader.parse(rawData)
-            val nowNanos = time.nanoseconds()
-            val inetAddress = InetAddress.getLoopbackAddress
-            val kafkaPrincipal = new KafkaPrincipal(KafkaPrincipal.USER_TYPE, "ANONYMOUS")
-            val listenerName = new ListenerName("PLAINTEXT")
-            val clientInformation = new ClientInformation("client-software-name", "client-software-version")
-            val connectionId = "dummy-connection-1"
+          println("[SCALA] result = " + rawData)
+        //   if (rawData != null) {
+        //     val header = RequestHeader.parse(rawData)
+        //     val nowNanos = time.nanoseconds()
+        //     val inetAddress = InetAddress.getLoopbackAddress
+        //     val kafkaPrincipal = new KafkaPrincipal(KafkaPrincipal.USER_TYPE, "ANONYMOUS")
+        //     val listenerName = new ListenerName("PLAINTEXT")
+        //     val clientInformation = new ClientInformation("client-software-name", "client-software-version")
+        //     val connectionId = "dummy-connection-1"
 
-            val context = new RequestContext(
-              header, 
-              connectionId, 
-              inetAddress,
-              kafkaPrincipal, 
-              listenerName, 
-              SecurityProtocol.PLAINTEXT,
-              clientInformation,
-              false
-            )
+        //     val context = new RequestContext(
+        //       header, 
+        //       connectionId, 
+        //       inetAddress,
+        //       kafkaPrincipal, 
+        //       listenerName, 
+        //       SecurityProtocol.PLAINTEXT,
+        //       clientInformation,
+        //       false
+        //     )
 
-            val req = new RequestChannel.Request(
-              1, 
-              context = context,
-              startTimeNanos = nowNanos, 
-              MemoryPool.NONE, 
-              rawData, 
-              dataPlaneRequestChannel.metrics,
-              None)
-            dataPlaneRequestChannel.sendRequest(req)
+        //     val req = new RequestChannel.Request(
+        //       1, 
+        //       context = context,
+        //       startTimeNanos = nowNanos, 
+        //       MemoryPool.NONE, 
+        //       rawData, 
+        //       dataPlaneRequestChannel.metrics,
+        //       None)
+        //     dataPlaneRequestChannel.sendRequest(req)
           
-        } else {
-          Thread.`yield`()
-        }
+        // } else {
+        //   Thread.`yield`()
+        // }
         
         // Thread.sleep(intervalMs)
       }

@@ -12,62 +12,74 @@
 
 
 int initialize_shared_memory(SharedMemoryHandle *handle, const char *shm_name, const char *sem_name, bool create) {
+    printf("[INIT] Initializing shared memory: create=%d, shm_name=%s, sem_name=%s\n", create, shm_name, sem_name);
+
     int flags = create ? (O_CREAT | O_RDWR) : O_RDWR;
     int shm_fd = shm_open(shm_name, flags, S_IRUSR | S_IWUSR);
     if (shm_fd == -1) {
-        perror("shm_open");
+        perror("[INIT] shm_open failed");
         return -1;
     }
+    printf("[INIT] shm_open succeeded: fd=%d\n", shm_fd);
 
     if (create && ftruncate(shm_fd, sizeof(LockFreeRingBuffer)) == -1) {
-        perror("ftruncate");
+        perror("[INIT] ftruncate failed");
         close(shm_fd);
         return -1;
     }
 
     void *addr = mmap(NULL, sizeof(LockFreeRingBuffer), PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
     if (addr == MAP_FAILED) {
-        perror("mmap");
+        perror("[INIT] mmap failed");
         close(shm_fd);
         return -1;
     }
+    printf("[INIT] mmap succeeded, addr=%p\n", addr);
     close(shm_fd);
 
     handle->rb = (LockFreeRingBuffer *)addr;
     if (create) {
         memset(handle->rb, 0, sizeof(LockFreeRingBuffer));
+        printf("[INIT] ring buffer zero-initialized\n");
     }
 
     handle->semaphore = sem_open(sem_name, create ? O_CREAT : 0, S_IRUSR | S_IWUSR, 0);
     if (handle->semaphore == SEM_FAILED) {
-        perror("sem_open");
+        perror("[INIT] sem_open failed");
         munmap(handle->rb, sizeof(LockFreeRingBuffer));
         return -1;
     }
+    printf("[INIT] sem_open succeeded\n");
 
-    // event_fd 생성성
-    handle->event_fd = eventfd(0, EFD_NONBLOCK | EFD_SEMAPHORE);
-    if (handle->event_fd == -1) { perror("eventfd"); return -1; }
+    handle->event_fd = eventfd(0, EFD_NONBLOCK);
+    if (handle->event_fd == -1) {
+        perror("[INIT] eventfd failed");
+        return -1;
+    }
+    printf("[INIT] eventfd created: fd=%d\n", handle->event_fd);
 
-    // epoll fd 생성
-    int epfd = epoll_create1(0);
+    handle->epfd = epoll_create1(0);
+    if (handle->epfd == -1) {
+        perror("[INIT] epoll_create1 failed");
+        close(handle->event_fd);
+        return -1;
+    }
+    printf("[INIT] epoll created: fd=%d\n", handle->epfd);
 
-    // epoll fd에 등록할 이벤트 생성
     struct epoll_event ev;
-    ev.events = EPOLLIN; // 읽을 수 있는 데이터 도착 시 감지
+    ev.events = EPOLLIN;
     ev.data.ptr = handle;
 
-    // epoll fd에 event_fd 등록
-    if (epoll_ctl(epfd, EPOLL_CTL_ADD, handle->event_fd, &ev) == -1) {
-        perror("epoll_ctl ADD");
+    if (epoll_ctl(handle->epfd, EPOLL_CTL_ADD, handle->event_fd, &ev) == -1) {
+        perror("[INIT] epoll_ctl ADD failed");
         close(handle->event_fd);
         munmap(handle->rb, sizeof(LockFreeRingBuffer)); 
         return -1;
     }
+    printf("[INIT] epoll_ctl registered eventfd\n");
 
     return 0;
 }
-
 void cleanup_shared_memory(SharedMemoryHandle *handle, const char *shm_name, const char *sem_name) {
     if (handle->rb) {
         munmap(handle->rb, sizeof(LockFreeRingBuffer));
@@ -80,6 +92,10 @@ void cleanup_shared_memory(SharedMemoryHandle *handle, const char *shm_name, con
     if (handle->event_fd != -1) {
         close(handle->event_fd);
         handle->event_fd = -1;
+    }
+    if (handle->epfd != -1) {
+        close(handle->epfd);
+        handle->epfd = -1;
     }
 
     sem_unlink(sem_name);
