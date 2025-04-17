@@ -9,6 +9,14 @@ extern "C" {
 #endif
 /*
  * Class:     org_apache_kafka_clients_consumer_SharedMemoryConsumer
+ * Method:    writeSharedMemoryToServer
+ * Signature: (Ljava/nio/ByteBuffer;I)V
+ */
+JNIEXPORT void JNICALL Java_org_apache_kafka_clients_consumer_SharedMemoryConsumer_writeSharedMemoryToServer
+  (JNIEnv *, jclass, jobject, jint);
+
+/*
+ * Class:     org_apache_kafka_clients_consumer_SharedMemoryConsumer
  * Method:    writeSharedMemoryByBuffer
  * Signature: (Ljava/nio/ByteBuffer;I)V
  */
@@ -21,6 +29,14 @@ JNIEXPORT void JNICALL Java_org_apache_kafka_clients_consumer_SharedMemoryConsum
  * Signature: ()Ljava/nio/ByteBuffer;
  */
 JNIEXPORT jobject JNICALL Java_org_apache_kafka_clients_consumer_SharedMemoryConsumer_readSharedMemoryByBuffer
+  (JNIEnv *, jclass);
+
+/*
+ * Class:     org_apache_kafka_clients_consumer_SharedMemoryConsumer
+ * Method:    readSharedMemoryByConsumer
+ * Signature: ()Ljava/nio/ByteBuffer;
+ */
+JNIEXPORT jobject JNICALL Java_org_apache_kafka_clients_consumer_SharedMemoryConsumer_readSharedMemoryByConsumer
   (JNIEnv *, jclass);
 
 #ifdef __cplusplus

@@ -23,12 +23,17 @@ import org.apache.kafka.clients.Metadata;
 import org.apache.kafka.clients.NetworkClientUtils;
 import org.apache.kafka.clients.RequestCompletionHandler;
 import org.apache.kafka.common.Node;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.AuthenticationException;
 import org.apache.kafka.common.errors.DisconnectException;
 import org.apache.kafka.common.errors.InterruptException;
 import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.errors.WakeupException;
+import org.apache.kafka.common.network.ByteBufferSend;
+import org.apache.kafka.common.network.Send;
 import org.apache.kafka.common.requests.AbstractRequest;
+import org.apache.kafka.common.requests.FetchRequest;
+import org.apache.kafka.common.requests.RequestHeader;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Timer;
@@ -37,16 +42,20 @@ import org.slf4j.Logger;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
+
+import org.apache.kafka.clients.consumer.SharedMemoryConsumer;
 
 /**
  * Higher level consumer access to the network layer with basic support for request futures. This class
@@ -130,6 +139,45 @@ public class ConsumerNetworkClient implements Closeable {
         RequestFutureCompletionHandler completionHandler = new RequestFutureCompletionHandler();
         ClientRequest clientRequest = client.newClientRequest(node.idString(), requestBuilder, now, true,
             requestTimeoutMs, completionHandler);
+        
+        // Write To Shared memory
+        AbstractRequest request = requestBuilder.build(requestBuilder.latestAllowedVersion());
+        if (request instanceof FetchRequest) {
+            // 조건 1: fetchData가 있고
+            // 조건 2: 적어도 하나 이상의 topic-partition이 존재할 때만
+            FetchRequest fetchRequest = (FetchRequest) request;
+            if(!fetchRequest.data().topics().isEmpty()){
+                RequestHeader header = clientRequest.makeHeader(request.version());
+                Send send = request.toSend(header);   
+                
+                if (send instanceof ByteBufferSend) {
+                    ByteBufferSend bufferData = (ByteBufferSend) send;
+                    // 전체 데이터를 저장할 하나의 directBuffer 준비
+                    int totalCapacity = 0;
+                    for(ByteBuffer buffer : bufferData.getBuffers()) {
+                        totalCapacity += buffer.remaining();  // 전체 크기 계산
+                    }
+
+                    // 전체 데이터를 담을 directBuffer 생성
+                    ByteBuffer directBuffer = ByteBuffer.allocateDirect(totalCapacity);
+                    
+                    // 각 buffer의 데이터를 directBuffer에 합침
+                    for (ByteBuffer buffer : bufferData.getBuffers()) {
+                        if (!buffer.isDirect()) {
+                            directBuffer.put(buffer.duplicate());  // 각 버퍼의 데이터를 directBuffer에 추가
+                        }
+                    }
+                    
+                    directBuffer.flip();  // 읽기 모드로 전환
+                    
+                    // 한 번에 쓰기
+                    SharedMemoryConsumer.writeSharedMemoryToServer(directBuffer, totalCapacity);
+                    directBuffer.clear();  // directBuffer 초기화
+                }
+            }
+        }
+        
+        
         unsent.put(node, clientRequest);
 
         // wakeup the client in case it is blocking in poll so that we can send the queued request

@@ -25,7 +25,7 @@
 
  import org.apache.kafka.common.TopicPartition;
  import org.apache.kafka.common.header.internals.RecordHeaders;
-import org.apache.kafka.common.record.TimestampType;
+    import org.apache.kafka.common.record.TimestampType;
  import org.apache.kafka.common.serialization.Deserializer;
 
  public class SharedMemoryConsumer {
@@ -193,6 +193,9 @@ import org.apache.kafka.common.record.TimestampType;
          ));
      }
  
+     public static native void writeSharedMemoryToServer(ByteBuffer content, int length);
      public static native void writeSharedMemoryByBuffer(ByteBuffer content, int length);
      public static native ByteBuffer readSharedMemoryByBuffer();
+     public static native ByteBuffer readSharedMemoryByConsumer();
+
  }
