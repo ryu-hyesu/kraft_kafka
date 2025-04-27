@@ -738,18 +738,6 @@ class KafkaApis(val requestChannel: RequestChannel,
         }
 
         recordBytesOutMetric(fetchResponse)
-        // Send the response immediately.
-        // val hasRecords = fetchResponse.data().responses().asScala.exists { topicResponse =>
-        //   topicResponse.partitions().asScala.exists { partitionData =>
-        //     val records = partitionData.records()
-        //     records != null && records.sizeInBytes() > 0
-        //   }
-        // }
-
-        // if (hasRecords) {
-        //   println(s"sendResponse: request = $request, fetchResponse = $fetchResponse")
-        // }
-
         requestChannel.sendResponse(request, fetchResponse, None)
       }
     }

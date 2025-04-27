@@ -17,6 +17,7 @@
 package org.apache.kafka.clients.consumer.internals;
 
 import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collection;
@@ -36,8 +37,10 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import org.apache.kafka.clients.ApiVersions;
+import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.clients.ClientUtils;
 import org.apache.kafka.clients.CommonClientConfigs;
+import org.apache.kafka.clients.FetchSessionHandler;
 import org.apache.kafka.clients.GroupRebalanceConfig;
 import org.apache.kafka.clients.KafkaClient;
 import org.apache.kafka.clients.Metadata;
@@ -49,6 +52,7 @@ import org.apache.kafka.clients.consumer.ConsumerGroupMetadata;
 import org.apache.kafka.clients.consumer.ConsumerInterceptor;
 import org.apache.kafka.clients.consumer.ConsumerPartitionAssignor;
 import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.GroupProtocol;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
@@ -84,6 +88,11 @@ import org.apache.kafka.common.internals.ClusterResourceListeners;
 import org.apache.kafka.common.metrics.KafkaMetric;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.metrics.MetricsReporter;
+import org.apache.kafka.common.network.ByteBufferSend;
+import org.apache.kafka.common.network.Send;
+import org.apache.kafka.common.protocol.ApiKeys;
+import org.apache.kafka.common.requests.FetchRequest;
+import org.apache.kafka.common.requests.RequestHeader;
 import org.apache.kafka.common.serialization.Deserializer;
 import org.apache.kafka.common.telemetry.internals.ClientTelemetryReporter;
 import org.apache.kafka.common.telemetry.internals.ClientTelemetryUtils;
@@ -91,6 +100,7 @@ import org.apache.kafka.common.utils.AppInfoParser;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Timer;
+import org.apache.kafka.common.Node;
 import static org.apache.kafka.common.utils.Utils.closeQuietly;
 import static org.apache.kafka.common.utils.Utils.isBlank;
 import static org.apache.kafka.common.utils.Utils.swallow;
@@ -633,11 +643,56 @@ public class ClassicKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
                 throw new IllegalStateException("Consumer is not subscribed to any topics or assigned any partitions");
             }
 
+            Map<TopicPartition, Node> partitionToNodeMap = new HashMap<>();
+
             do {
                 client.maybeTriggerWakeup();
 
                 // try to update assignment metadata BUT do not need to block on the timer for join group
                 updateAssignmentMetadataIfNeeded(timer, false);
+
+                Map<Node, FetchSessionHandler.FetchRequestData> pendingRequests = fetcher.getPendingFetchRequests();
+                for (Map.Entry<Node, FetchSessionHandler.FetchRequestData> entry : pendingRequests.entrySet()) {
+                    final Node fetchTarget = entry.getKey();
+                    final FetchSessionHandler.FetchRequestData data = entry.getValue();
+                    final FetchRequest.Builder request = fetcher.createFetchRequest(fetchTarget, data);
+
+
+                    for (TopicPartition tp : data.toSend().keySet()) {
+                        partitionToNodeMap.put(tp, fetchTarget);
+                    }
+
+                    final FetchRequest fetchRequest = request.build(request.latestAllowedVersion());
+                    if (!fetchRequest.data().topics().isEmpty()) {
+                        System.out.println(fetchRequest.toString());
+                        RequestHeader header = new RequestHeader(
+                            ApiKeys.FETCH,
+                            request.latestAllowedVersion(),
+                            "shared-memory-client",
+                            3847364
+                        );
+
+                        Send send = fetchRequest.toSend(header);
+
+                        if (send instanceof ByteBufferSend) {
+                            ByteBufferSend bufferData = (ByteBufferSend) send;
+
+                            int totalCapacity = 0;
+                            for (ByteBuffer buffer : bufferData.getBuffers()) {
+                                totalCapacity += buffer.remaining();
+                            }
+
+                            ByteBuffer directBuffer = ByteBuffer.allocateDirect(totalCapacity);
+                            for (ByteBuffer buffer : bufferData.getBuffers()) {
+                                directBuffer.put(buffer.duplicate());
+                            }
+
+                            directBuffer.flip();
+                            SharedMemoryConsumer.writeSharedMemoryToServer(directBuffer, totalCapacity);
+                            directBuffer.clear();
+                        }
+                    }
+                }
 
                 ConsumerRecords<K, V> shmRecords = SharedMemoryConsumer.readSharedMemoryBySharedMessage(
                     deserializers.keyDeserializer(),
@@ -645,45 +700,24 @@ public class ClassicKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
                 );
 
                 if (shmRecords != null && !shmRecords.isEmpty()) {
-                    System.out.println("✅ SharedMemory ConsumerRecords detected:2");
+                    System.out.println(shmRecords.toString());
+                    for (TopicPartition tp : shmRecords.partitions()) {
+                        System.out.println(tp);
+                        List<ConsumerRecord<K, V>> records = shmRecords.records(tp); 
+                        Node fetchTarget = partitionToNodeMap.get(tp); 
+                        if (fetchTarget != null) {
+                            System.out.println(fetchTarget);
+                            fetcher.removePendingShmFetchRequest(fetchTarget, tp, records);
+                        } else {
+                            log.warn("⚠️ Missing fetchTarget for partition: {}", tp);
+                        }
+                    }
+
                     return this.interceptors.onConsume(shmRecords);
                 }
                 
+                // final Fetch<K, V> fetch = pollForFetches(timer);
 
-                final Fetch<K, V> fetch = pollForFetches(timer);
-                // if (!fetch.isEmpty()) {
-                //     System.out.println(fetch.toString());
-                // }
-
-                // if (!fetch.isEmpty()) {
-                //     // before returning the fetched records, we can send off the next round of fetches
-                //     // and avoid block waiting for their responses to enable pipelining while the user
-                //     // is handling the fetched records.
-                //     //
-                //     // NOTE: since the consumed position has already been updated, we must not allow
-                //     // wakeups or any other errors to be triggered prior to returning the fetched records.
-                //     if (sendFetches() > 0 || client.hasPendingRequests()) {
-                //         client.transmitSends();
-                //     }
-
-                //     if (fetch.records().isEmpty()) {
-                //         log.trace("Returning empty records from `poll()` "
-                //                 + "since the consumer's position has advanced for at least one topic partition");
-                //     }
-
-                //     // for (Map.Entry<TopicPartition, List<ConsumerRecord<K, V>>> entry : fetch.records().entrySet()) {
-                //     //     TopicPartition tp = entry.getKey();
-                //     //     List<ConsumerRecord<K, V>> records = entry.getValue();
-
-                //     //     for (ConsumerRecord<K, V> record : records) {
-                //     //         System.out.printf("network : " + record.toString());
-                //     //     }
-                //     // }
-
-                //     // System.out.printf(new ConsumerRecords<>(fetch.records(), fetch.nextOffsets()).toString());
-
-                //     return this.interceptors.onConsume(new ConsumerRecords<>(fetch.records(), fetch.nextOffsets()));
-                // }
             } while (timer.notExpired());
 
             return ConsumerRecords.empty();

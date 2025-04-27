@@ -139,43 +139,45 @@ public class ConsumerNetworkClient implements Closeable {
         RequestFutureCompletionHandler completionHandler = new RequestFutureCompletionHandler();
         ClientRequest clientRequest = client.newClientRequest(node.idString(), requestBuilder, now, true,
             requestTimeoutMs, completionHandler);
-        
-        // Write To Shared memory
-        AbstractRequest request = requestBuilder.build(requestBuilder.latestAllowedVersion());
-        if (request instanceof FetchRequest) {
-            // 조건 1: fetchData가 있고
-            // 조건 2: 적어도 하나 이상의 topic-partition이 존재할 때만
-            FetchRequest fetchRequest = (FetchRequest) request;
-            if(!fetchRequest.data().topics().isEmpty()){
-                RequestHeader header = clientRequest.makeHeader(request.version());
-                Send send = request.toSend(header);   
-                
-                if (send instanceof ByteBufferSend) {
-                    ByteBufferSend bufferData = (ByteBufferSend) send;
-                    // 전체 데이터를 저장할 하나의 directBuffer 준비
-                    int totalCapacity = 0;
-                    for(ByteBuffer buffer : bufferData.getBuffers()) {
-                        totalCapacity += buffer.remaining();  // 전체 크기 계산
-                    }
 
-                    // 전체 데이터를 담을 directBuffer 생성
-                    ByteBuffer directBuffer = ByteBuffer.allocateDirect(totalCapacity);
+        // System.out.println("consuemr fetch : " + clientRequest.toString());
+        
+        // // Write To Shared memory
+        // AbstractRequest request = requestBuilder.build(requestBuilder.latestAllowedVersion());
+        // if (request instanceof FetchRequest) {
+        //     // 조건 1: fetchData가 있고
+        //     // 조건 2: 적어도 하나 이상의 topic-partition이 존재할 때만
+        //     FetchRequest fetchRequest = (FetchRequest) request;
+        //     if(!fetchRequest.data().topics().isEmpty()){
+        //         RequestHeader header = clientRequest.makeHeader(request.version());
+        //         Send send = request.toSend(header);   
+                
+        //         if (send instanceof ByteBufferSend) {
+        //             ByteBufferSend bufferData = (ByteBufferSend) send;
+        //             // 전체 데이터를 저장할 하나의 directBuffer 준비
+        //             int totalCapacity = 0;
+        //             for(ByteBuffer buffer : bufferData.getBuffers()) {
+        //                 totalCapacity += buffer.remaining();  // 전체 크기 계산
+        //             }
+
+        //             // 전체 데이터를 담을 directBuffer 생성
+        //             ByteBuffer directBuffer = ByteBuffer.allocateDirect(totalCapacity);
                     
-                    // 각 buffer의 데이터를 directBuffer에 합침
-                    for (ByteBuffer buffer : bufferData.getBuffers()) {
-                        if (!buffer.isDirect()) {
-                            directBuffer.put(buffer.duplicate());  // 각 버퍼의 데이터를 directBuffer에 추가
-                        }
-                    }
+        //             // 각 buffer의 데이터를 directBuffer에 합침
+        //             for (ByteBuffer buffer : bufferData.getBuffers()) {
+        //                 if (!buffer.isDirect()) {
+        //                     directBuffer.put(buffer.duplicate());  // 각 버퍼의 데이터를 directBuffer에 추가
+        //                 }
+        //             }
                     
-                    directBuffer.flip();  // 읽기 모드로 전환
+        //             directBuffer.flip();  // 읽기 모드로 전환
                     
-                    // 한 번에 쓰기
-                    SharedMemoryConsumer.writeSharedMemoryToServer(directBuffer, totalCapacity);
-                    directBuffer.clear();  // directBuffer 초기화
-                }
-            }
-        }
+        //             // 한 번에 쓰기
+        //             SharedMemoryConsumer.writeSharedMemoryToServer(directBuffer, totalCapacity);
+        //             directBuffer.clear();  // directBuffer 초기화
+        //         }
+        //     }
+        // }
         
         
         unsent.put(node, clientRequest);

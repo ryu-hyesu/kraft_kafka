@@ -22,6 +22,7 @@ import org.apache.kafka.clients.FetchSessionHandler;
 import org.apache.kafka.clients.KafkaClient;
 import org.apache.kafka.clients.Metadata;
 import org.apache.kafka.clients.NetworkClientUtils;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
@@ -279,6 +280,48 @@ public abstract class AbstractFetch implements Closeable {
         log.debug("Removing pending request for fetch session: {} for node: {}", sessionId, fetchTarget);
         nodesWithPendingFetchRequests.remove(fetchTarget.id());
     }
+
+    protected <K, V> void removePendingShmFetchRequest(Node fetchTarget,
+                                            TopicPartition tp,
+                                            List<ConsumerRecord<K, V>> partRecords) {
+        if (!subscriptions.isAssigned(tp)) {
+            log.debug("Not returning fetched records for partition {} since it is no longer assigned", tp);
+        } else if (!subscriptions.isFetchable(tp)) {
+            log.debug("Not returning fetched records for assigned partition {} since it is no longer fetchable", tp);
+        } else {
+            SubscriptionState.FetchPosition position = subscriptions.position(tp);
+            if (position == null)
+                throw new IllegalStateException("Missing position for fetchable partition " + tp);
+
+            if (!partRecords.isEmpty()) {
+                long lastOffset = partRecords.get(partRecords.size() - 1).offset();
+                long nextOffset = lastOffset + 1;
+
+                if (nextOffset > position.offset) {
+                    SubscriptionState.FetchPosition nextPosition = new SubscriptionState.FetchPosition(
+                            nextOffset,
+                            Optional.ofNullable(partRecords.get(partRecords.size() - 1).leaderEpoch()).orElse(null),
+                            position.currentLeader);
+
+                    log.trace("✅ Updating fetch position from {} to {} for partition {} ({} records)",
+                            position, nextPosition, tp, partRecords.size());
+
+                    subscriptions.position(tp, nextPosition);
+                }
+
+                Long partitionLag = subscriptions.partitionLag(tp, fetchConfig.isolationLevel);
+                if (partitionLag != null)
+                    metricsManager.recordPartitionLag(tp, partitionLag);
+
+                Long lead = subscriptions.partitionLead(tp);
+                if (lead != null)
+                    metricsManager.recordPartitionLead(tp, lead);
+            }
+        }
+
+        nodesWithPendingFetchRequests.remove(fetchTarget.id());
+    }
+
 
     /**
      * Creates a new {@link FetchRequest fetch request} in preparation for sending to the Kafka cluster.

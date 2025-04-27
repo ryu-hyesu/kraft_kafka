@@ -27,6 +27,7 @@ import org.apache.kafka.clients.ClientRequest;
 import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.clients.FetchSessionHandler;
 import org.apache.kafka.clients.NetworkClient;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.internals.IdempotentCloser;
@@ -143,6 +144,18 @@ public class Fetcher<K, V> extends AbstractFetch {
     public Fetch<K, V> collectFetch() {
         return fetchCollector.collectFetch(fetchBuffer);
     }
+
+    public <K,V> void removeFetchRequest(Node node, TopicPartition tp, List<ConsumerRecord<K, V>> partRecords) {
+        removePendingShmFetchRequest(node, tp, partRecords);
+    }
+
+    public Map<Node, FetchSessionHandler.FetchRequestData> getPendingFetchRequests() {
+        return prepareFetchRequests();
+    }
+    
+    public FetchRequest.Builder buildFetchRequest(Node node, FetchSessionHandler.FetchRequestData data) {
+        return createFetchRequest(node, data);
+    }    
 
     /**
      * This method is called by {@link #close(Timer)} which is guarded by the {@link IdempotentCloser}) such as to only

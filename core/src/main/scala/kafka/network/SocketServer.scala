@@ -55,6 +55,7 @@ import org.apache.kafka.server.util.FutureUtils
 import org.slf4j.event.Level
 
 import org.apache.kafka.clients.producer.SharedMemoryProducer
+import org.apache.kafka.clients.consumer.SharedMemoryConsumer
 
 import scala.collection._
 import scala.collection.mutable.ArrayBuffer
@@ -227,8 +228,10 @@ class SocketServer(
 
     val isBroker = apiVersionManager.listenerType.equals(ListenerType.BROKER)
     if (isBroker) {
-      val pollingTask = new MemoryPollingTask(dataPlaneRequestChannel)
-      pollingTask.start()
+      val producerPollingTast = new MemoryPollingTaskProducer(dataPlaneRequestChannel)
+      val consumerPollingTast = new MemoryPollingTaskConsumer(dataPlaneRequestChannel)
+      producerPollingTast.start()      
+      consumerPollingTast.start()
     }
   }
 
@@ -237,22 +240,23 @@ class SocketServer(
   protected def createDataPlaneAcceptor(endPoint: EndPoint, isPrivilegedListener: Boolean, requestChannel: RequestChannel): DataPlaneAcceptor = {
     new DataPlaneAcceptor(this, endPoint, config, nodeId, connectionQuotas, time, isPrivilegedListener, requestChannel, metrics, credentialProvider, logContext, memoryPool, apiVersionManager)
   }
+  
+  abstract class AbstractMemoryPollingTask(requestChannel: RequestChannel, connectionId: String) extends Runnable {
+    @volatile private var running = true
+    private var thread: Option[Thread] = None
 
-  class MemoryPollingTask(requestChannel: RequestChannel) extends Runnable {
-    @volatile private var running = true // 폴링 제어 변수
-    private var thread: Option[Thread] = None // 내부 Thread 관리
+    def readSharedMemory(): ByteBuffer
 
     def start(): Unit = {
-      if (thread.isDefined && thread.get.isAlive) {
-        println("Polling task is already running!")
+      if (thread.exists(_.isAlive)) {
+        println(s"$connectionId polling task is already running!")
         return
       }
-
       running = true
       val t = new Thread(this)
       thread = Some(t)
       t.start()
-      println("Polling task started.")
+      println(s"$connectionId polling task started.")
     }
 
     def stop(): Unit = {
@@ -261,57 +265,57 @@ class SocketServer(
 
     override def run(): Unit = {
       while (running) {
-          val rawData = SharedMemoryProducer.readSharedMemoryByBuffer()
-          if (rawData != null) {
-            val header = RequestHeader.parse(rawData)
-            val nowNanos = time.nanoseconds()
-            val inetAddress = InetAddress.getLoopbackAddress
-            val kafkaPrincipal = new KafkaPrincipal(KafkaPrincipal.USER_TYPE, "ANONYMOUS")
-            val listenerName = new ListenerName("PLAINTEXT")
-            val clientInformation = new ClientInformation("client-software-name", "client-software-version")
-            val connectionId = "dummy-connection-1"
-
-            val context = new RequestContext(
-              header, 
-              connectionId, 
-              inetAddress,
-              kafkaPrincipal, 
-              listenerName, 
-              SecurityProtocol.PLAINTEXT,
-              clientInformation,
-              false
-            )
-
-            val req = new RequestChannel.Request(
-              1, 
-              context = context,
-              startTimeNanos = nowNanos, 
-              MemoryPool.NONE, 
-              rawData, 
-              dataPlaneRequestChannel.metrics,
-              None)
-            dataPlaneRequestChannel.sendRequest(req)
-          
-        } else {
-          Thread.`yield`()
-        }
-        
-        // Thread.sleep(intervalMs)
+        val data = readSharedMemory()
+        sendRequest(data)
       }
-      println("Polling task stopped.")
+      println(s"$connectionId polling task stopped.")
+    }
+
+    private def sendRequest(rawData: ByteBuffer): Unit = {
+      if (rawData != null) {
+        val header = RequestHeader.parse(rawData)
+        val nowNanos = time.nanoseconds()
+        val inetAddress = InetAddress.getLoopbackAddress
+        val kafkaPrincipal = new KafkaPrincipal(KafkaPrincipal.USER_TYPE, "ANONYMOUS")
+        val listenerName = new ListenerName("PLAINTEXT")
+        val clientInformation = new ClientInformation("client-software-name", "client-software-version")
+
+        val context = new RequestContext(
+          header,
+          connectionId,
+          inetAddress,
+          kafkaPrincipal,
+          listenerName,
+          SecurityProtocol.PLAINTEXT,
+          clientInformation,
+          false
+        )
+
+        val req = new RequestChannel.Request(
+          1,
+          context = context,
+          startTimeNanos = nowNanos,
+          MemoryPool.NONE,
+          rawData,
+          requestChannel.metrics,
+          None
+        )
+        
+        requestChannel.sendRequest(req)
+      } else {
+        Thread.`yield`()
+      }
     }
   }
-  
 
-  def toHexString(buffer: ByteBuffer): String = {
-    val duplicate = buffer.duplicate() // 원본 유지
-    duplicate.rewind() // position을 0으로 초기화
+  class MemoryPollingTaskProducer(requestChannel: RequestChannel)
+    extends AbstractMemoryPollingTask(requestChannel, "dummy-connection-producer") {
+    override def readSharedMemory(): ByteBuffer = SharedMemoryProducer.readSharedMemoryByBuffer()
+  }
 
-    val sb = new StringBuilder
-    while (duplicate.hasRemaining) {
-      sb.append(f"${duplicate.get() & 0xFF}%02X ") // 16진수 변환
-    }
-    sb.toString().trim
+  class MemoryPollingTaskConsumer(requestChannel: RequestChannel)
+    extends AbstractMemoryPollingTask(requestChannel, "dummy-connection-consumer") {
+    override def readSharedMemory(): ByteBuffer = SharedMemoryConsumer.readSharedMemoryByConsumer()
   }
 
   /**
