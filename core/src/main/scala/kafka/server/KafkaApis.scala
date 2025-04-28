@@ -615,55 +615,29 @@ class KafkaApis(val requestChannel: RequestChannel,
           .setAbortedTransactions(abortedTransactions)
           .setRecords(data.records)
           .setPreferredReadReplica(data.preferredReadReplica.orElse(FetchResponse.INVALID_PREFERRED_REPLICA_ID))
+        val topic = tp.topic
+        val partition = tp.partition
+        val hw = data.highWatermark
+        val lso = data.lastStableOffset.orElse(-1L)
 
-        if (data.records != null && data.records.sizeInBytes > 0) {
-          try {
-            val topic = tp.topic
-            val partition = tp.partition
-            val hw = data.highWatermark
-            val lso = data.lastStableOffset.orElse(-1L)
+        data.records match {
+          case fr: FileRecords =>
+            println(s"[RecordBatch] FileRecords detected for topic=$topic partition=$partition")
+            val batches = fr.batches().asScala
+            processBatches(topic, partition, batches, hw, lso)
 
-            val fileRecords = data.records.asInstanceOf[FileRecords]
+          case mr: MemoryRecords =>
+            println(s"[RecordBatch] MemoryRecords detected for topic=$topic partition=$partition")
+            val batches = mr.batches().asScala
+            processBatches(topic, partition, batches, hw, lso)
 
-            fileRecords.batches().asScala.foreach { batch =>
-              val baseOffset = batch.baseOffset()
-              val lastOffset = batch.lastOffset()
+          case null =>
+            println(s"[RecordBatch] data.records is null for topic=$topic partition=$partition")
 
-              println(s"[RecordBatch] baseOffset=$baseOffset, lastOffset=$lastOffset")
-
-              batch.iterator().asScala.foreach { record =>
-                val offset = record.offset()
-                val timestamp = record.timestamp()
-
-                val keyBytes = if (record.hasKey) Utils.toArray(record.key()) else null
-                val valueBytes = if (record.hasValue) Utils.toArray(record.value()) else null
-
-                val keyStr = Option(keyBytes).map(bytes => new String(bytes, "UTF-8")).getOrElse("null")
-                val valueStr = Option(valueBytes).map(bytes => new String(bytes, "UTF-8")).getOrElse("null")
-
-                println(s"  [Record] offset=$offset, key=$keyStr, value=$valueStr, timestamp=$timestamp")
-
-                if (valueBytes != null && valueBytes.nonEmpty) {
-                  SharedMemoryConsumer.writeSharedMemoryByBuffer(
-                    topic,
-                    partition,
-                    keyBytes,
-                    valueBytes,
-                    timestamp,
-                    offset + 1, // next offset
-                    hw,
-                    lso
-                  )
-                }
-              }
-            }
-
-          } catch {
-            case e: Throwable =>
-              logger.warn(s"[SharedMemory] Write failed for $tp", e)
-          }
+          case other =>
+            println(s"[RecordBatch] Unknown record type: ${other.getClass} for topic=$topic partition=$partition")
         }
-        
+
         if (versionId >= 16) {
           data.error match {
             case Errors.NOT_LEADER_OR_FOLLOWER | Errors.FENCED_LEADER_EPOCH =>
@@ -682,6 +656,59 @@ class KafkaApis(val requestChannel: RequestChannel,
         partitions.put(tp, partitionData)
       }
       erroneous.foreach { case (tp, data) => partitions.put(tp, data) }
+
+      def processBatches(
+          topic: String,
+          partition: Int,
+          batches: Iterable[RecordBatch],
+          hw: Long,
+          lso: Long
+      ): Unit = {
+        if (batches.nonEmpty) {
+          batches.foreach { batch =>
+            println(s"[RecordBatch] baseOffset=${batch.baseOffset()}, lastOffset=${batch.lastOffset()}")
+
+            batch.iterator().asScala.foreach { record =>
+              val offset = record.offset()
+              val timestamp = record.timestamp()
+
+              val keyBytes = if (record.hasKey) Utils.toArray(record.key()) else null
+              val valueBytes = if (record.hasValue) Utils.toArray(record.value()) else null
+
+              val keyStr = Option(keyBytes).map(bytes => new String(bytes, "UTF-8")).getOrElse("null")
+              val valueStr = Option(valueBytes).map(bytes => new String(bytes, "UTF-8")).getOrElse("null")
+
+              println(s"  [Record] offset=$offset, key=$keyStr, value=$valueStr, timestamp=$timestamp")
+
+              if (valueBytes != null && valueBytes.nonEmpty) {
+                SharedMemoryConsumer.writeSharedMemoryByBuffer(
+                  topic,
+                  partition,
+                  keyBytes,
+                  valueBytes,
+                  timestamp,
+                  offset + 1, // next offset
+                  hw,
+                  lso
+                )
+              }
+            }
+          }
+        } else {
+          println(s"[RecordBatch] No batches for topic=$topic partition=$partition")
+
+          SharedMemoryConsumer.writeSharedMemoryByBuffer(
+            topic,
+            partition,
+            null,   // key 없음
+            null,   // value 없음
+            -1L,    // timestamp 없음
+            hw,     // offset: high watermark 사용
+            hw,
+            lso
+          )
+        }
+      }
 
       def recordBytesOutMetric(fetchResponse: FetchResponse): Unit = {
         // record the bytes out metrics only when the response is being sent

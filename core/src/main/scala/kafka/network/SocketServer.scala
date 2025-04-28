@@ -273,6 +273,8 @@ class SocketServer(
 
     private def sendRequest(rawData: ByteBuffer): Unit = {
       if (rawData != null) {
+        println(rawData)
+        
         val header = RequestHeader.parse(rawData)
         val nowNanos = time.nanoseconds()
         val inetAddress = InetAddress.getLoopbackAddress

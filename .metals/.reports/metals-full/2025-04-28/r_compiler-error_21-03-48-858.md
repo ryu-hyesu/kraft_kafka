@@ -1,3 +1,16 @@
+file://<WORKSPACE>/clients/src/main/java/org/apache/kafka/clients/consumer/internals/ConsumerNetworkClient.java
+### java.util.NoSuchElementException: next on empty iterator
+
+occurred in the presentation compiler.
+
+presentation compiler configuration:
+
+
+action parameters:
+offset: 5616
+uri: file://<WORKSPACE>/clients/src/main/java/org/apache/kafka/clients/consumer/internals/ConsumerNetworkClient.java
+text:
+```scala
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements. See the NOTICE file distributed with
@@ -117,7 +130,7 @@ public class ConsumerNetworkClient implements Closeable {
      *
      * @param node The destination of the request
      * @param requestBuilder A builder for the request payload
-     * @param requestTimeoutMs Maximum time in milliseconds to await a response before disconnecting the socket and
+     * @param requestTimeoutMs Maximu@@m time in milliseconds to await a response before disconnecting the socket and
      *                         cancelling the request. The request may be cancelled sooner if the socket disconnects
      *                         for any reason.
      * @return A future which indicates the result of the send.
@@ -773,3 +786,24 @@ public class ConsumerNetworkClient implements Closeable {
     }
 
 }
+```
+
+
+
+#### Error stacktrace:
+
+```
+scala.collection.Iterator$$anon$19.next(Iterator.scala:973)
+	scala.collection.Iterator$$anon$19.next(Iterator.scala:971)
+	scala.collection.mutable.MutationTracker$CheckedIterator.next(MutationTracker.scala:76)
+	scala.collection.IterableOps.head(Iterable.scala:222)
+	scala.collection.IterableOps.head$(Iterable.scala:222)
+	scala.collection.AbstractIterable.head(Iterable.scala:935)
+	dotty.tools.dotc.interactive.InteractiveDriver.run(InteractiveDriver.scala:164)
+	dotty.tools.pc.CachingDriver.run(CachingDriver.scala:45)
+	dotty.tools.pc.HoverProvider$.hover(HoverProvider.scala:40)
+	dotty.tools.pc.ScalaPresentationCompiler.hover$$anonfun$1(ScalaPresentationCompiler.scala:389)
+```
+#### Short summary: 
+
+java.util.NoSuchElementException: next on empty iterator
