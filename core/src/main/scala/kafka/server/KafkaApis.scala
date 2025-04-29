@@ -622,12 +622,10 @@ class KafkaApis(val requestChannel: RequestChannel,
 
         data.records match {
           case fr: FileRecords =>
-            println(s"[RecordBatch] FileRecords detected for topic=$topic partition=$partition")
             val batches = fr.batches().asScala
             processBatches(topic, partition, batches, hw, lso)
 
           case mr: MemoryRecords =>
-            println(s"[RecordBatch] MemoryRecords detected for topic=$topic partition=$partition")
             val batches = mr.batches().asScala
             processBatches(topic, partition, batches, hw, lso)
 
@@ -666,19 +664,12 @@ class KafkaApis(val requestChannel: RequestChannel,
       ): Unit = {
         if (batches.nonEmpty) {
           batches.foreach { batch =>
-            println(s"[RecordBatch] baseOffset=${batch.baseOffset()}, lastOffset=${batch.lastOffset()}")
-
             batch.iterator().asScala.foreach { record =>
               val offset = record.offset()
               val timestamp = record.timestamp()
 
               val keyBytes = if (record.hasKey) Utils.toArray(record.key()) else null
               val valueBytes = if (record.hasValue) Utils.toArray(record.value()) else null
-
-              val keyStr = Option(keyBytes).map(bytes => new String(bytes, "UTF-8")).getOrElse("null")
-              val valueStr = Option(valueBytes).map(bytes => new String(bytes, "UTF-8")).getOrElse("null")
-
-              println(s"  [Record] offset=$offset, key=$keyStr, value=$valueStr, timestamp=$timestamp")
 
               if (valueBytes != null && valueBytes.nonEmpty) {
                 SharedMemoryConsumer.writeSharedMemoryByBuffer(
@@ -695,8 +686,6 @@ class KafkaApis(val requestChannel: RequestChannel,
             }
           }
         } else {
-          println(s"[RecordBatch] No batches for topic=$topic partition=$partition")
-
           SharedMemoryConsumer.writeSharedMemoryByBuffer(
             topic,
             partition,
@@ -1549,7 +1538,6 @@ class KafkaApis(val requestChannel: RequestChannel,
     // the callback for sending a DeleteRecordsResponse
     def sendResponseCallback(authorizedTopicResponses: Map[TopicPartition, DeleteRecordsPartitionResult]): Unit = {
       val mergedResponseStatus = authorizedTopicResponses ++ unauthorizedTopicResponses ++ nonExistingTopicResponses
-      println(s"sendResponseCallback : ${mergedResponseStatus}")
       mergedResponseStatus.foreachEntry { (topicPartition, status) =>
         if (status.errorCode != Errors.NONE.code) {
           debug("DeleteRecordsRequest with correlation id %d from client %s on partition %s failed due to %s".format(

@@ -1,3 +1,16 @@
+file://<WORKSPACE>/clients/src/main/java/org/apache/kafka/clients/consumer/SharedMemoryConsumer.java
+### java.util.NoSuchElementException: next on empty iterator
+
+occurred in the presentation compiler.
+
+presentation compiler configuration:
+
+
+action parameters:
+offset: 5879
+uri: file://<WORKSPACE>/clients/src/main/java/org/apache/kafka/clients/consumer/SharedMemoryConsumer.java
+text:
+```scala
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements. See the NOTICE file distributed with
@@ -152,6 +165,14 @@
  
          K key = keyBytes != null ? keyDeserializer.deserialize(topic, keyBytes) : null;
          V value = valueBytes != null ? valueDeserializer.deserialize(topic, valueBytes) : null;
+ 
+         boolean isDummyRecord = (key == null) &&
+                        (value == null);
+
+        if (isDummyRecord) {
+            System.out.printf("🛑 Skipping dummy record for %s-%d (offset=%d)%n", topic, partition, nextOffset - 1);
+            return Consumer@@Records.empty();
+        }
         
          ConsumerRecord<K, V> record = new ConsumerRecord<>(
                  topic,
@@ -181,3 +202,24 @@
      public static native ByteBuffer readSharedMemoryByConsumer();
 
  }
+```
+
+
+
+#### Error stacktrace:
+
+```
+scala.collection.Iterator$$anon$19.next(Iterator.scala:973)
+	scala.collection.Iterator$$anon$19.next(Iterator.scala:971)
+	scala.collection.mutable.MutationTracker$CheckedIterator.next(MutationTracker.scala:76)
+	scala.collection.IterableOps.head(Iterable.scala:222)
+	scala.collection.IterableOps.head$(Iterable.scala:222)
+	scala.collection.AbstractIterable.head(Iterable.scala:935)
+	dotty.tools.dotc.interactive.InteractiveDriver.run(InteractiveDriver.scala:164)
+	dotty.tools.pc.CachingDriver.run(CachingDriver.scala:45)
+	dotty.tools.pc.HoverProvider$.hover(HoverProvider.scala:40)
+	dotty.tools.pc.ScalaPresentationCompiler.hover$$anonfun$1(ScalaPresentationCompiler.scala:389)
+```
+#### Short summary: 
+
+java.util.NoSuchElementException: next on empty iterator

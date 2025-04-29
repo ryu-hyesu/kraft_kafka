@@ -1,3 +1,16 @@
+file://<WORKSPACE>/clients/src/main/java/org/apache/kafka/clients/consumer/internals/AbstractFetch.java
+### java.util.NoSuchElementException: next on empty iterator
+
+occurred in the presentation compiler.
+
+presentation compiler configuration:
+
+
+action parameters:
+offset: 15316
+uri: file://<WORKSPACE>/clients/src/main/java/org/apache/kafka/clients/consumer/internals/AbstractFetch.java
+text:
+```scala
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements. See the NOTICE file distributed with
@@ -293,28 +306,34 @@ public abstract class AbstractFetch implements Closeable {
 
             // ★ 여기가 핵심: offset 업데이트
             if (!partRecords.isEmpty()) {
-                long lastOffset = partRecords.get(partRecords.size() - 1).offset();
-                long nextOffset = lastOffset + 1;
+                ConsumerRecord<K, V> lastRecord = partRecords.get(partRecords.size() - 1);
+                boolean skipOffsetUpdate = lastRecord.key() == null && lastRecord.value() == null;
 
-                if (nextOffset > position.offset) {
-                    SubscriptionState.FetchPosition nextPosition = new SubscriptionState.FetchPosition(
-                            nextOffset,
-                            Optional.ofNullable(partRecords.get(partRecords.size() - 1).leaderEpoch()).orElse(null),
-                            position.currentLeader);
+                if (!skipOffsetUpdate) {
+                    long lastOffset = partRecords.get(partRecords.size() - 1).offset();
+                    long nextOffset = lastOffset + 1;
 
-                    log.trace("✅ Updating fetch position from {} to {} for partition {} ({} records)",
-                            position, nextPosition, tp, partRecords.size());
+                    if (nextOffset > position.offset) {
+                        SubscriptionState.FetchPosition nextPosition = new SubscriptionState.FetchPosition(
+                                nextOffset,
+                                Optional.ofNullable(partRecords.get(partRecords.size() - 1).leaderEpoch()).orElse(null),
+                                position.currentLeader);
 
-                    subscriptions.position(tp, nextPosition);
+                        log.trace("✅ Updating fetch position from {} to {} for partition {} ({} records)",
+                                position, nextPosition, tp, partRecords.size());
+
+                        subscr@@iptions.position(tp, nextPosition);
+                    }
+
+                    Long partitionLag = subscriptions.partitionLag(tp, fetchConfig.isolationLevel);
+                    if (partitionLag != null)
+                        metricsManager.recordPartitionLag(tp, partitionLag);
+
+                    Long lead = subscriptions.partitionLead(tp);
+                    if (lead != null)
+                        metricsManager.recordPartitionLead(tp, lead);
                 }
-
-                Long partitionLag = subscriptions.partitionLag(tp, fetchConfig.isolationLevel);
-                if (partitionLag != null)
-                    metricsManager.recordPartitionLag(tp, partitionLag);
-
-                Long lead = subscriptions.partitionLead(tp);
-                if (lead != null)
-                    metricsManager.recordPartitionLead(tp, lead);
+                
             }
         }
 
@@ -541,3 +560,24 @@ public abstract class AbstractFetch implements Closeable {
         void handle(Node target, FetchSessionHandler.FetchRequestData data, T response);
     }
 }
+```
+
+
+
+#### Error stacktrace:
+
+```
+scala.collection.Iterator$$anon$19.next(Iterator.scala:973)
+	scala.collection.Iterator$$anon$19.next(Iterator.scala:971)
+	scala.collection.mutable.MutationTracker$CheckedIterator.next(MutationTracker.scala:76)
+	scala.collection.IterableOps.head(Iterable.scala:222)
+	scala.collection.IterableOps.head$(Iterable.scala:222)
+	scala.collection.AbstractIterable.head(Iterable.scala:935)
+	dotty.tools.dotc.interactive.InteractiveDriver.run(InteractiveDriver.scala:164)
+	dotty.tools.pc.CachingDriver.run(CachingDriver.scala:45)
+	dotty.tools.pc.HoverProvider$.hover(HoverProvider.scala:40)
+	dotty.tools.pc.ScalaPresentationCompiler.hover$$anonfun$1(ScalaPresentationCompiler.scala:389)
+```
+#### Short summary: 
+
+java.util.NoSuchElementException: next on empty iterator

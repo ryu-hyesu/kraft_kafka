@@ -1,3 +1,15 @@
+file://<WORKSPACE>/clients/src/main/java/org/apache/kafka/clients/consumer/internals/AbstractFetch.java
+### java.util.NoSuchElementException: next on empty iterator
+
+occurred in the presentation compiler.
+
+presentation compiler configuration:
+
+
+action parameters:
+uri: file://<WORKSPACE>/clients/src/main/java/org/apache/kafka/clients/consumer/internals/AbstractFetch.java
+text:
+```scala
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements. See the NOTICE file distributed with
@@ -282,9 +294,12 @@ public abstract class AbstractFetch implements Closeable {
     protected <K, V> void removePendingShmFetchRequest(Node fetchTarget,
                                             TopicPartition tp,
                                             List<ConsumerRecord<K, V>> partRecords) {
+        System.out.println("remove pending request!!!");
         if (!subscriptions.isAssigned(tp)) {
+            System.out.println("1");
             log.debug("Not returning fetched records for partition {} since it is no longer assigned", tp);
         } else if (!subscriptions.isFetchable(tp)) {
+            System.out.println("2");
             log.debug("Not returning fetched records for assigned partition {} since it is no longer fetchable", tp);
         } else {
             SubscriptionState.FetchPosition position = subscriptions.position(tp);
@@ -541,3 +556,29 @@ public abstract class AbstractFetch implements Closeable {
         void handle(Node target, FetchSessionHandler.FetchRequestData data, T response);
     }
 }
+```
+
+
+
+#### Error stacktrace:
+
+```
+scala.collection.Iterator$$anon$19.next(Iterator.scala:973)
+	scala.collection.Iterator$$anon$19.next(Iterator.scala:971)
+	scala.collection.mutable.MutationTracker$CheckedIterator.next(MutationTracker.scala:76)
+	scala.collection.IterableOps.head(Iterable.scala:222)
+	scala.collection.IterableOps.head$(Iterable.scala:222)
+	scala.collection.AbstractIterable.head(Iterable.scala:935)
+	dotty.tools.dotc.interactive.InteractiveDriver.run(InteractiveDriver.scala:164)
+	dotty.tools.pc.CachingDriver.run(CachingDriver.scala:45)
+	dotty.tools.pc.WithCompilationUnit.<init>(WithCompilationUnit.scala:31)
+	dotty.tools.pc.SimpleCollector.<init>(PcCollector.scala:351)
+	dotty.tools.pc.PcSemanticTokensProvider$Collector$.<init>(PcSemanticTokensProvider.scala:63)
+	dotty.tools.pc.PcSemanticTokensProvider.Collector$lzyINIT1(PcSemanticTokensProvider.scala:63)
+	dotty.tools.pc.PcSemanticTokensProvider.Collector(PcSemanticTokensProvider.scala:63)
+	dotty.tools.pc.PcSemanticTokensProvider.provide(PcSemanticTokensProvider.scala:88)
+	dotty.tools.pc.ScalaPresentationCompiler.semanticTokens$$anonfun$1(ScalaPresentationCompiler.scala:111)
+```
+#### Short summary: 
+
+java.util.NoSuchElementException: next on empty iterator

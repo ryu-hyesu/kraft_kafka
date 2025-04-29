@@ -249,14 +249,12 @@ class SocketServer(
 
     def start(): Unit = {
       if (thread.exists(_.isAlive)) {
-        println(s"$connectionId polling task is already running!")
         return
       }
       running = true
       val t = new Thread(this)
       thread = Some(t)
       t.start()
-      println(s"$connectionId polling task started.")
     }
 
     def stop(): Unit = {
@@ -268,13 +266,10 @@ class SocketServer(
         val data = readSharedMemory()
         sendRequest(data)
       }
-      println(s"$connectionId polling task stopped.")
     }
 
     private def sendRequest(rawData: ByteBuffer): Unit = {
       if (rawData != null) {
-        println(rawData)
-        
         val header = RequestHeader.parse(rawData)
         val nowNanos = time.nanoseconds()
         val inetAddress = InetAddress.getLoopbackAddress
@@ -292,6 +287,7 @@ class SocketServer(
           clientInformation,
           false
         )
+
 
         val req = new RequestChannel.Request(
           1,

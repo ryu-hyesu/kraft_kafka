@@ -1,3 +1,16 @@
+file://<WORKSPACE>/clients/src/main/java/org/apache/kafka/clients/consumer/internals/AbstractFetch.java
+### java.util.NoSuchElementException: next on empty iterator
+
+occurred in the presentation compiler.
+
+presentation compiler configuration:
+
+
+action parameters:
+offset: 15081
+uri: file://<WORKSPACE>/clients/src/main/java/org/apache/kafka/clients/consumer/internals/AbstractFetch.java
+text:
+```scala
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements. See the NOTICE file distributed with
@@ -293,6 +306,10 @@ public abstract class AbstractFetch implements Closeable {
 
             // ★ 여기가 핵심: offset 업데이트
             if (!partRecords.isEmpty()) {
+                ConsumerRecord<K, V> lastRecord = partRecords.get(partRecords.size() - 1);
+            boolean skipOffsetUpdate = lastRecord.key() == null && lastRecord.value() == null;
+
+            if (!skipOffsetUpdate) {
                 long lastOffset = partRecords.get(partRecords.size() - 1).offset();
                 long nextOffset = lastOffset + 1;
 
@@ -302,7 +319,7 @@ public abstract class AbstractFetch implements Closeable {
                             Optional.ofNullable(partRecords.get(partRecords.size() - 1).leaderEpoch()).orElse(null),
                             position.currentLeader);
 
-                    log.trace("✅ Updating fetch position from {} to {} for partition {} ({} records)",
+                    @@log.trace("✅ Updating fetch position from {} to {} for partition {} ({} records)",
                             position, nextPosition, tp, partRecords.size());
 
                     subscriptions.position(tp, nextPosition);
@@ -316,6 +333,7 @@ public abstract class AbstractFetch implements Closeable {
                 if (lead != null)
                     metricsManager.recordPartitionLead(tp, lead);
             }
+        }
         }
 
         // ★ 이건 원래 네가 잘 했던 부분: pending 요청 삭제
@@ -541,3 +559,24 @@ public abstract class AbstractFetch implements Closeable {
         void handle(Node target, FetchSessionHandler.FetchRequestData data, T response);
     }
 }
+```
+
+
+
+#### Error stacktrace:
+
+```
+scala.collection.Iterator$$anon$19.next(Iterator.scala:973)
+	scala.collection.Iterator$$anon$19.next(Iterator.scala:971)
+	scala.collection.mutable.MutationTracker$CheckedIterator.next(MutationTracker.scala:76)
+	scala.collection.IterableOps.head(Iterable.scala:222)
+	scala.collection.IterableOps.head$(Iterable.scala:222)
+	scala.collection.AbstractIterable.head(Iterable.scala:935)
+	dotty.tools.dotc.interactive.InteractiveDriver.run(InteractiveDriver.scala:164)
+	dotty.tools.pc.CachingDriver.run(CachingDriver.scala:45)
+	dotty.tools.pc.HoverProvider$.hover(HoverProvider.scala:40)
+	dotty.tools.pc.ScalaPresentationCompiler.hover$$anonfun$1(ScalaPresentationCompiler.scala:389)
+```
+#### Short summary: 
+
+java.util.NoSuchElementException: next on empty iterator

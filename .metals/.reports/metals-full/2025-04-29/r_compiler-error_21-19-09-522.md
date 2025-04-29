@@ -1,3 +1,16 @@
+file://<WORKSPACE>/clients/src/main/java/org/apache/kafka/clients/consumer/SharedMemoryConsumer.java
+### java.util.NoSuchElementException: next on empty iterator
+
+occurred in the presentation compiler.
+
+presentation compiler configuration:
+
+
+action parameters:
+offset: 5225
+uri: file://<WORKSPACE>/clients/src/main/java/org/apache/kafka/clients/consumer/SharedMemoryConsumer.java
+text:
+```scala
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements. See the NOTICE file distributed with
@@ -144,7 +157,7 @@
          byte[] keyBytes = keyLen >= 0 ? new byte[keyLen] : null;
          if (keyLen > 0) recordsBuf.get(keyBytes);
  
-         int valueLen = recordsBuf.getInt();
+         int valueLen =@@ recordsBuf.getInt();
          byte[] valueBytes = valueLen >= 0 ? new byte[valueLen] : null;
          if (valueLen > 0) recordsBuf.get(valueBytes);
  
@@ -152,7 +165,7 @@
  
          K key = keyBytes != null ? keyDeserializer.deserialize(topic, keyBytes) : null;
          V value = valueBytes != null ? valueDeserializer.deserialize(topic, valueBytes) : null;
-        
+ 
          ConsumerRecord<K, V> record = new ConsumerRecord<>(
                  topic,
                  partition,
@@ -181,3 +194,24 @@
      public static native ByteBuffer readSharedMemoryByConsumer();
 
  }
+```
+
+
+
+#### Error stacktrace:
+
+```
+scala.collection.Iterator$$anon$19.next(Iterator.scala:973)
+	scala.collection.Iterator$$anon$19.next(Iterator.scala:971)
+	scala.collection.mutable.MutationTracker$CheckedIterator.next(MutationTracker.scala:76)
+	scala.collection.IterableOps.head(Iterable.scala:222)
+	scala.collection.IterableOps.head$(Iterable.scala:222)
+	scala.collection.AbstractIterable.head(Iterable.scala:935)
+	dotty.tools.dotc.interactive.InteractiveDriver.run(InteractiveDriver.scala:164)
+	dotty.tools.pc.CachingDriver.run(CachingDriver.scala:45)
+	dotty.tools.pc.HoverProvider$.hover(HoverProvider.scala:40)
+	dotty.tools.pc.ScalaPresentationCompiler.hover$$anonfun$1(ScalaPresentationCompiler.scala:389)
+```
+#### Short summary: 
+
+java.util.NoSuchElementException: next on empty iterator
