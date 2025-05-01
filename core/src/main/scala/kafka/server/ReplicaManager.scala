@@ -1555,10 +1555,6 @@ class ReplicaManager(val config: KafkaConfig,
       brokerTopicStats.topicStats(topicIdPartition.topicPartition.topic).totalFetchRequestRate.mark()
       brokerTopicStats.allTopicsStats.totalFetchRequestRate.mark()
 
-      val size = logReadResult.info.records.sizeInBytes
-      val error = logReadResult.error
-      val offset = logReadResult.info.fetchOffsetMetadata.messageOffset
-
       if (logReadResult.error != Errors.NONE)
         errorReadingData = true
       if (!remoteFetchInfo.isPresent && logReadResult.info.delayedRemoteStorageFetch.isPresent) {

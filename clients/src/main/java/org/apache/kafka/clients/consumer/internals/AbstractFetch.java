@@ -279,6 +279,10 @@ public abstract class AbstractFetch implements Closeable {
         nodesWithPendingFetchRequests.remove(fetchTarget.id());
     }
 
+    protected void removeShmPendingFetchRequest(Node fetchTarget) {
+        nodesWithPendingFetchRequests.remove(fetchTarget.id());
+    }
+
     protected <K, V> void removePendingShmFetchRequest(Node fetchTarget,
                                             TopicPartition tp,
                                             List<ConsumerRecord<K, V>> partRecords) {
@@ -318,7 +322,6 @@ public abstract class AbstractFetch implements Closeable {
             }
         }
 
-        // ★ 이건 원래 네가 잘 했던 부분: pending 요청 삭제
         nodesWithPendingFetchRequests.remove(fetchTarget.id());
     }
 

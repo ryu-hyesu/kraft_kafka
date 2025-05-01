@@ -702,14 +702,17 @@ public class ClassicKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
                     for (TopicPartition tp : shmRecords.partitions()) {
                         List<ConsumerRecord<K, V>> records = shmRecords.records(tp); 
                         Node fetchTarget = partitionToNodeMap.get(tp); 
+                        ConsumerRecord<K, V> lastRecord = records.get(records.size() - 1);
+                        skipOffsetUpdate = lastRecord.key() == null && lastRecord.value() == null;
+
                         if (fetchTarget != null) {
-                            fetcher.removePendingShmFetchRequest(fetchTarget, tp, records);
+                            if (!skipOffsetUpdate)
+                                fetcher.removePendingShmFetchRequest(fetchTarget, tp, records);
+                            else
+                                fetcher.removePendingFetchRequest(fetchTarget);
                         } else {
                             log.warn("⚠️ Missing fetchTarget for partition: {}", tp);
                         }
-
-                        ConsumerRecord<K, V> lastRecord = records.get(records.size() - 1);
-                        skipOffsetUpdate = lastRecord.key() == null && lastRecord.value() == null;
 
                     }
 
