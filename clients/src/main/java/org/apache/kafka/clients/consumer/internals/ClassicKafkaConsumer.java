@@ -719,8 +719,6 @@ public class ClassicKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
                     if (!skipOffsetUpdate)
                         return this.interceptors.onConsume(shmRecords);
                 }
-                
-                // final Fetch<K, V> fetch = pollForFetches(timer);
 
             } while (timer.notExpired());
 

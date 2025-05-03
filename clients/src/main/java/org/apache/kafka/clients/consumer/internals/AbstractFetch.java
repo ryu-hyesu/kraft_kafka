@@ -295,7 +295,6 @@ public abstract class AbstractFetch implements Closeable {
             if (position == null)
                 throw new IllegalStateException("Missing position for fetchable partition " + tp);
 
-            // ★ 여기가 핵심: offset 업데이트
             if (!partRecords.isEmpty()) {
                 long lastOffset = partRecords.get(partRecords.size() - 1).offset();
                 long nextOffset = lastOffset + 1;
@@ -305,9 +304,6 @@ public abstract class AbstractFetch implements Closeable {
                             nextOffset,
                             Optional.ofNullable(partRecords.get(partRecords.size() - 1).leaderEpoch()).orElse(null),
                             position.currentLeader);
-
-                    log.trace("✅ Updating fetch position from {} to {} for partition {} ({} records)",
-                            position, nextPosition, tp, partRecords.size());
 
                     subscriptions.position(tp, nextPosition);
                 }
