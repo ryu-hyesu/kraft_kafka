@@ -10856,3 +10856,4 @@ Apr 29, 2025 9:26:39 PM scala.meta.internal.pc.CompilerAccess handleError
 SEVERE: A severe compiler error occurred, full details of the error can be found in the error report /home/hyesu/kafka/.metals/.reports/metals-full/2025-04-29/r_compiler-error_21-26-39-050.md
 Apr 29, 2025 9:26:39 PM scala.meta.internal.pc.CompilerAccess handleError
 SEVERE: A severe compiler error occurred, full details of the error can be found in the error report /home/hyesu/kafka/.metals/.reports/metals-full/2025-04-29/r_compiler-error_21-26-39-370.md
+2025.05.04 23:53:47 INFO  Started: Metals version 1.5.2 in folders '/home/hyesu/kafka' for client Visual Studio Code 1.99.3.[0m
