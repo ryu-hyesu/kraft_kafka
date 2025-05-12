@@ -145,10 +145,13 @@ public class Fetcher<K, V> extends AbstractFetch {
         return fetchCollector.collectFetch(fetchBuffer);
     }
 
+    // access from ClassicKafkaConsumer
+    // remove pending
     public <K,V> void removePendingFetchRequest(Node node) {
         removeShmPendingFetchRequest(node);
     }
 
+    // update offset with remove pending
     public <K,V> void removeFetchRequest(Node node, TopicPartition tp, List<ConsumerRecord<K, V>> partRecords) {
         removePendingShmFetchRequest(node, tp, partRecords);
     }

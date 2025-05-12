@@ -144,7 +144,7 @@ public abstract class AbstractFetch implements Closeable {
                                       final ClientResponse resp) {
         try {
             final FetchResponse response = (FetchResponse) resp.responseBody();
-            final FetchSessionHandler handler = sessionHandler(fetchTarget.id());
+            final FetchSessionHandler handler = sessionHandler(fetchTarget.id()); // node에 대한 fetch 세션 헨들러 불러오기기
 
             if (handler == null) {
                 log.error("Unable to find FetchSessionHandler for node {}. Ignoring fetch response.",
@@ -162,13 +162,21 @@ public abstract class AbstractFetch implements Closeable {
                 return;
             }
 
+            // response body에서 각 파티션에 대한 데이터를 parsing
+            // sessionTopicNames에서 세션에 등록된 토픽 이름을 불러옴옴
             final Map<TopicPartition, FetchResponseData.PartitionData> responseData = response.responseData(handler.sessionTopicNames(), requestVersion);
             final Set<TopicPartition> partitions = new HashSet<>(responseData.keySet());
             final FetchMetricsAggregator metricAggregator = new FetchMetricsAggregator(metricsManager, partitions);
 
             Map<TopicPartition, Metadata.LeaderIdAndEpoch> partitionsWithUpdatedLeaderInfo = new HashMap<>();
+            // 파티션 반복 처리 및 CompletedFetch 생성하여
+            // 요청했던 offset과 응답을 매칭함함
+            // 이때 CompletedFetch은 fetch 결과의 단위를 의미함함
             for (Map.Entry<TopicPartition, FetchResponseData.PartitionData> entry : responseData.entrySet()) {
                 TopicPartition partition = entry.getKey();
+
+                // (1) 요청 정보 검증 
+                // 이는 응답으로 온 파티션이 요청 시점에 포함되었는지 검증함
                 FetchRequest.PartitionData requestData = data.sessionPartitions().get(partition);
 
                 if (requestData == null) {
@@ -188,12 +196,14 @@ public abstract class AbstractFetch implements Closeable {
                     throw new IllegalStateException(message);
                 }
 
+                // (2) 요청 당시 오프셋과 응답 데이터를 매핑함
                 long fetchOffset = requestData.fetchOffset;
-                FetchResponseData.PartitionData partitionData = entry.getValue();
+                FetchResponseData.PartitionData partitionData = entry.getValue(); // 레코드, 에러코드, 마지막 오프셋 정보 등등
 
                 log.debug("Fetch {} at offset {} for partition {} returned fetch data {}",
                         fetchConfig.isolationLevel, fetchOffset, partition, partitionData);
 
+                // (3) 리더 오류 처리
                 Errors partitionError = Errors.forCode(partitionData.errorCode());
                 if (partitionError == Errors.NOT_LEADER_OR_FOLLOWER || partitionError == Errors.FENCED_LEADER_EPOCH) {
                     log.debug("For {}, received error {}, with leaderIdAndEpoch {}", partition, partitionError, partitionData.currentLeader());
@@ -203,6 +213,9 @@ public abstract class AbstractFetch implements Closeable {
                     }
                 }
 
+                // (4) CompletedFetch 생성 및 저장
+                // 이후 Consumer에서 poll()으로 fetchBuffer에서 데이터를 읽음
+                // CompletedFetch에는 (1) 어느 파티션의 응답인지, (2) 실제 받은 데이터, 에러 코드, (3) 요청했던 offset, (4) 해당 fetch의 메트릭 측정기기
                 CompletedFetch completedFetch = new CompletedFetch(
                         logContext,
                         subscriptions,
@@ -215,6 +228,8 @@ public abstract class AbstractFetch implements Closeable {
                 fetchBuffer.add(completedFetch);
             }
 
+            // 일부 파티션에서 리더 정보가 변경되었을 경우 메타 데이터에 반영함
+            // 리더가 바뀌면 포지션 재검증증
             if (!partitionsWithUpdatedLeaderInfo.isEmpty()) {
                 List<Node> leaderNodes = response.data().nodeEndpoints().stream()
                     .map(e -> new Node(e.nodeId(), e.host(), e.port(), e.rack()))
@@ -229,8 +244,10 @@ public abstract class AbstractFetch implements Closeable {
                 );
             }
 
+            // fetch latency를 metric에 기록함함
             metricsManager.recordLatency(resp.destination(), resp.requestLatencyMs());
         } finally {
+            // fetch에 대한 요청을 pending 목록에서 제거함함
             removePendingFetchRequest(fetchTarget, data.metadata().sessionId());
         }
     }

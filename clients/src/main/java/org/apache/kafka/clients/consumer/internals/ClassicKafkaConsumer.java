@@ -706,9 +706,9 @@ public class ClassicKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
                         skipOffsetUpdate = lastRecord.key() == null && lastRecord.value() == null;
 
                         if (fetchTarget != null) {
-                            if (!skipOffsetUpdate)
+                            if (!skipOffsetUpdate) // update offset with remove pending
                                 fetcher.removePendingShmFetchRequest(fetchTarget, tp, records);
-                            else
+                            else // if dump messages exists, do not update offset
                                 fetcher.removePendingFetchRequest(fetchTarget);
                         } else {
                             log.warn("⚠️ Missing fetchTarget for partition: {}", tp);

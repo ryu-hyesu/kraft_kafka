@@ -24,9 +24,12 @@
  import java.util.Optional;
 
  import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.compress.Compression;
  import org.apache.kafka.common.header.internals.RecordHeaders;
-    import org.apache.kafka.common.record.TimestampType;
- import org.apache.kafka.common.serialization.Deserializer;
+import org.apache.kafka.common.record.MemoryRecords;
+import org.apache.kafka.common.record.MemoryRecordsBuilder;
+import org.apache.kafka.common.record.TimestampType;
+import org.apache.kafka.common.serialization.Deserializer;
 
  public class SharedMemoryConsumer {
  
@@ -174,7 +177,55 @@
                  tp, new OffsetAndMetadata(nextOffset)
          ));
      }
- 
+
+     public static MemoryRecords readSharedMemoryAsMemoryRecords() {
+        ByteBuffer buffer = readSharedMemoryByBuffer();
+        
+        if (buffer == null || buffer.remaining() < 32) return MemoryRecords.EMPTY;
+        
+        buffer.rewind();
+    
+        int topicLen = buffer.getInt();
+        byte[] topicBytes = new byte[topicLen];
+        buffer.get(topicBytes);
+        String topic = new String(topicBytes, StandardCharsets.UTF_8);
+    
+        int partition = buffer.getInt();
+        long nextOffset = buffer.getLong();
+        long highWatermark = buffer.getLong(); // optional
+        long lastStableOffset = buffer.getLong(); // optional
+    
+        int recordsLen = buffer.getInt();
+        ByteBuffer recordsBuf = buffer.slice();
+        recordsBuf.limit(recordsLen);
+        recordsBuf.rewind();
+    
+        int keyLen = recordsBuf.getInt();
+        byte[] keyBytes = keyLen >= 0 ? new byte[keyLen] : null;
+        if (keyLen > 0) recordsBuf.get(keyBytes);
+    
+        int valueLen = recordsBuf.getInt();
+        byte[] valueBytes = valueLen >= 0 ? new byte[valueLen] : null;
+        if (valueLen > 0) recordsBuf.get(valueBytes);
+    
+        long timestamp = recordsBuf.getLong();
+    
+        // ✅ 여기 수정
+        long baseOffset = nextOffset - 1;
+    
+        MemoryRecordsBuilder builder = MemoryRecords.builder(
+            buffer,
+            Compression.NONE,
+            TimestampType.CREATE_TIME,
+            baseOffset
+        );
+    
+        builder.append(timestamp, keyBytes, valueBytes);
+        builder.close();
+    
+        return builder.build();
+    }
+    
      public static native void writeSharedMemoryToServer(ByteBuffer content, int length);
      public static native void writeSharedMemoryByBuffer(ByteBuffer content, int length);
      public static native ByteBuffer readSharedMemoryByBuffer();
