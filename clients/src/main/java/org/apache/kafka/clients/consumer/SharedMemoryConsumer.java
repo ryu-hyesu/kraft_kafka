@@ -26,6 +26,7 @@
  import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.compress.Compression;
  import org.apache.kafka.common.header.internals.RecordHeaders;
+ import org.apache.kafka.common.message.FetchResponseData;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.MemoryRecordsBuilder;
 import org.apache.kafka.common.record.TimestampType;
@@ -178,10 +179,22 @@ import org.apache.kafka.common.serialization.Deserializer;
          ));
      }
 
-     public static MemoryRecords readSharedMemoryAsMemoryRecords() {
+     public static class PartitionFetchResult {
+        public final String topic;
+        public final int partition;
+        public final FetchResponseData.PartitionData data;
+    
+        public PartitionFetchResult(String topic, int partition, FetchResponseData.PartitionData data) {
+            this.topic = topic;
+            this.partition = partition;
+            this.data = data;
+        }
+    }
+    
+     public static PartitionFetchResult readSharedMemoryAsMemoryRecords() {
         ByteBuffer buffer = readSharedMemoryByBuffer();
         
-        if (buffer == null || buffer.remaining() < 32) return MemoryRecords.EMPTY;
+        if (buffer == null || buffer.remaining() < 32) return new PartitionFetchResult(null, -1, null);
         
         buffer.rewind();
     
@@ -210,20 +223,35 @@ import org.apache.kafka.common.serialization.Deserializer;
     
         long timestamp = recordsBuf.getLong();
     
-        // ✅ 여기 수정
         long baseOffset = nextOffset - 1;
+        ByteBuffer outBuffer = ByteBuffer.allocate(512);
     
+        // 빈 버퍼(512) 할당
         MemoryRecordsBuilder builder = MemoryRecords.builder(
-            buffer,
+            outBuffer,
             Compression.NONE,
             TimestampType.CREATE_TIME,
             baseOffset
         );
-    
-        builder.append(timestamp, keyBytes, valueBytes);
+
+        // Kafak header | CRC | RecordBatch | Record 포맷으로 채워짐
+        // 또한 builder는 내부적으로 RecordBatch를 생성하고 해당 batch에 record를 연속적으로 추가함
+        builder.append(timestamp, keyBytes, valueBytes); 
         builder.close();
+
+        MemoryRecords records = builder.build();
+
+        // MemoryRecords.readableRecords(buffer); // memoryRecord 형식이 아니라면 절대 해서 안 됨 파싱 안 됨!
     
-        return builder.build();
+        FetchResponseData.PartitionData pd = new FetchResponseData.PartitionData();
+        pd.setPartitionIndex(partition);
+        pd.setErrorCode((short) 0); // Errors.NONE.code()
+        pd.setHighWatermark(highWatermark);
+        pd.setLastStableOffset(lastStableOffset);
+        pd.setLogStartOffset(-1); // optional
+        pd.setRecords(records);
+        
+        return new PartitionFetchResult(topic, partition, pd);
     }
     
      public static native void writeSharedMemoryToServer(ByteBuffer content, int length);

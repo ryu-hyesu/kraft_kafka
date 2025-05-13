@@ -28,6 +28,7 @@ import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.clients.FetchSessionHandler;
 import org.apache.kafka.clients.NetworkClient;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.SharedMemoryConsumer.PartitionFetchResult;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.internals.IdempotentCloser;
@@ -152,8 +153,8 @@ public class Fetcher<K, V> extends AbstractFetch {
     }
 
     // update offset with remove pending
-    public <K,V> void removeFetchRequest(Node node, TopicPartition tp, List<ConsumerRecord<K, V>> partRecords) {
-        removePendingShmFetchRequest(node, tp, partRecords);
+    public <K,V> void removeFetchRequest(Node fetchTarget, PartitionFetchResult data, short requestVersion) {
+        removePendingShmFetchRequest(fetchTarget, data, requestVersion);
     }
 
     public Map<Node, FetchSessionHandler.FetchRequestData> getPendingFetchRequests() {

@@ -33,7 +33,8 @@ import org.apache.kafka.clients.FetchSessionHandler;
 import org.apache.kafka.clients.KafkaClient;
 import org.apache.kafka.clients.Metadata;
 import org.apache.kafka.clients.NetworkClientUtils;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.SharedMemoryConsumer.PartitionFetchResult;
+
 import static org.apache.kafka.clients.consumer.internals.FetchUtils.requestMetadataUpdate;
 import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.Node;
@@ -44,6 +45,8 @@ import org.apache.kafka.common.internals.IdempotentCloser;
 import org.apache.kafka.common.message.FetchResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.record.MemoryRecords;
+import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.requests.FetchRequest;
 import org.apache.kafka.common.requests.FetchResponse;
 import org.apache.kafka.common.utils.BufferSupplier;
@@ -300,40 +303,61 @@ public abstract class AbstractFetch implements Closeable {
         nodesWithPendingFetchRequests.remove(fetchTarget.id());
     }
 
-    protected <K, V> void removePendingShmFetchRequest(Node fetchTarget,
-                                            TopicPartition tp,
-                                            List<ConsumerRecord<K, V>> partRecords) {
-        if (!subscriptions.isAssigned(tp)) {
-            log.debug("Not returning fetched records for partition {} since it is no longer assigned", tp);
-        } else if (!subscriptions.isFetchable(tp)) {
-            log.debug("Not returning fetched records for assigned partition {} since it is no longer fetchable", tp);
-        } else {
-            SubscriptionState.FetchPosition position = subscriptions.position(tp);
-            if (position == null)
-                throw new IllegalStateException("Missing position for fetchable partition " + tp);
+    protected <K, V> void removePendingShmFetchRequest(Node fetchTarget, PartitionFetchResult data, short requestVersion) {
 
-            if (!partRecords.isEmpty()) {
-                long lastOffset = partRecords.get(partRecords.size() - 1).offset();
-                long nextOffset = lastOffset + 1;
+        TopicPartition tp = new TopicPartition(data.topic, data.partition);
+        FetchResponseData.PartitionData pd = data.data;
+        long fetchOffset = -1;
 
-                if (nextOffset > position.offset) {
-                    SubscriptionState.FetchPosition nextPosition = new SubscriptionState.FetchPosition(
-                            nextOffset,
-                            Optional.ofNullable(partRecords.get(partRecords.size() - 1).leaderEpoch()).orElse(null),
-                            position.currentLeader);
-
-                    subscriptions.position(tp, nextPosition);
-                }
-
-                Long partitionLag = subscriptions.partitionLag(tp, fetchConfig.isolationLevel);
-                if (partitionLag != null)
-                    metricsManager.recordPartitionLag(tp, partitionLag);
-
-                Long lead = subscriptions.partitionLead(tp);
-                if (lead != null)
-                    metricsManager.recordPartitionLead(tp, lead);
-            }
+        MemoryRecords records = (MemoryRecords) pd.records();
+        for (RecordBatch batch : records.batches()) {
+            fetchOffset = batch.baseOffset();  // 하나만 있으면 이걸로 충분
+            break;
         }
+
+        Set<TopicPartition> partitions = Set.of(tp);
+        final FetchMetricsAggregator metricAggregator = new FetchMetricsAggregator(metricsManager, partitions);
+        CompletedFetch completedFetch = new CompletedFetch(
+                        logContext,
+                        subscriptions,
+                        decompressionBufferSupplier,
+                        tp,
+                        pd,
+                        metricAggregator,
+                        fetchOffset,
+                        requestVersion);
+                fetchBuffer.add(completedFetch);
+        // if (!subscriptions.isAssigned(tp)) {
+        //     log.debug("Not returning fetched records for partition {} since it is no longer assigned", tp);
+        // } else if (!subscriptions.isFetchable(tp)) {
+        //     log.debug("Not returning fetched records for assigned partition {} since it is no longer fetchable", tp);
+        // } else {
+        //     SubscriptionState.FetchPosition position = subscriptions.position(tp);
+        //     if (position == null)
+        //         throw new IllegalStateException("Missing position for fetchable partition " + tp);
+
+        //     if (!partRecords.isEmpty()) {
+        //         long lastOffset = partRecords.get(partRecords.size() - 1).offset();
+        //         long nextOffset = lastOffset + 1;
+
+        //         if (nextOffset > position.offset) {
+        //             SubscriptionState.FetchPosition nextPosition = new SubscriptionState.FetchPosition(
+        //                     nextOffset,
+        //                     Optional.ofNullable(partRecords.get(partRecords.size() - 1).leaderEpoch()).orElse(null),
+        //                     position.currentLeader);
+
+        //             subscriptions.position(tp, nextPosition);
+        //         }
+
+        //         Long partitionLag = subscriptions.partitionLag(tp, fetchConfig.isolationLevel);
+        //         if (partitionLag != null)
+        //             metricsManager.recordPartitionLag(tp, partitionLag);
+
+        //         Long lead = subscriptions.partitionLead(tp);
+        //         if (lead != null)
+        //             metricsManager.recordPartitionLead(tp, lead);
+        //     }
+        // }
 
         nodesWithPendingFetchRequests.remove(fetchTarget.id());
     }

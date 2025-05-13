@@ -51,7 +51,6 @@ import org.apache.kafka.clients.consumer.ConsumerGroupMetadata;
 import org.apache.kafka.clients.consumer.ConsumerInterceptor;
 import org.apache.kafka.clients.consumer.ConsumerPartitionAssignor;
 import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.GroupProtocol;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
@@ -60,6 +59,7 @@ import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.consumer.OffsetAndTimestamp;
 import org.apache.kafka.clients.consumer.OffsetCommitCallback;
 import org.apache.kafka.clients.consumer.SharedMemoryConsumer;
+import org.apache.kafka.clients.consumer.SharedMemoryConsumer.PartitionFetchResult;
 import org.apache.kafka.clients.consumer.SubscriptionPattern;
 import static org.apache.kafka.clients.consumer.internals.ConsumerUtils.CONSUMER_JMX_PREFIX;
 import static org.apache.kafka.clients.consumer.internals.ConsumerUtils.CONSUMER_METRIC_GROUP_PREFIX;
@@ -642,82 +642,20 @@ public class ClassicKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
                 throw new IllegalStateException("Consumer is not subscribed to any topics or assigned any partitions");
             }
 
-            Map<TopicPartition, Node> partitionToNodeMap = new HashMap<>();
-
             do {
                 client.maybeTriggerWakeup();
 
                 // try to update assignment metadata BUT do not need to block on the timer for join group
                 updateAssignmentMetadataIfNeeded(timer, false);
-
-                Map<Node, FetchSessionHandler.FetchRequestData> pendingRequests = fetcher.getPendingFetchRequests();
-                for (Map.Entry<Node, FetchSessionHandler.FetchRequestData> entry : pendingRequests.entrySet()) {
-                    final Node fetchTarget = entry.getKey();
-                    final FetchSessionHandler.FetchRequestData data = entry.getValue();
-                    final FetchRequest.Builder request = fetcher.createFetchRequest(fetchTarget, data);
-
-
-                    for (TopicPartition tp : data.toSend().keySet()) {
-                        partitionToNodeMap.put(tp, fetchTarget);
+                
+                final Fetch<K, V> fetch = pollForFetchesFromShm(timer);
+                if (!fetch.isEmpty()) {
+                    if (fetch.records().isEmpty()) {
+                        log.trace("Returning empty records from `poll()` "
+                                + "since the consumer's position has advanced for at least one topic partition");
                     }
 
-                    final FetchRequest fetchRequest = request.build(request.latestAllowedVersion());
-                    if (!fetchRequest.data().topics().isEmpty()) {
-                        RequestHeader header = new RequestHeader(
-                            ApiKeys.FETCH,
-                            request.latestAllowedVersion(),
-                            "shared-memory-client",
-                            3847364
-                        );
-
-                        Send send = fetchRequest.toSend(header);
-
-                        if (send instanceof ByteBufferSend) {
-                            ByteBufferSend bufferData = (ByteBufferSend) send;
-
-                            int totalCapacity = 0;
-                            for (ByteBuffer buffer : bufferData.getBuffers()) {
-                                totalCapacity += buffer.remaining();
-                            }
-
-                            ByteBuffer directBuffer = ByteBuffer.allocateDirect(totalCapacity);
-                            for (ByteBuffer buffer : bufferData.getBuffers()) {
-                                directBuffer.put(buffer.duplicate());
-                            }
-
-                            directBuffer.flip();
-                            SharedMemoryConsumer.writeSharedMemoryToServer(directBuffer, totalCapacity);
-                            directBuffer.clear();
-                        }
-                    }
-                }
-
-                ConsumerRecords<K, V> shmRecords = SharedMemoryConsumer.readSharedMemoryBySharedMessage(
-                    deserializers.keyDeserializer(),
-                    deserializers.valueDeserializer()
-                );
-
-                if (shmRecords != null && !shmRecords.isEmpty()) {
-                    boolean skipOffsetUpdate = false;
-                    for (TopicPartition tp : shmRecords.partitions()) {
-                        List<ConsumerRecord<K, V>> records = shmRecords.records(tp); 
-                        Node fetchTarget = partitionToNodeMap.get(tp); 
-                        ConsumerRecord<K, V> lastRecord = records.get(records.size() - 1);
-                        skipOffsetUpdate = lastRecord.key() == null && lastRecord.value() == null;
-
-                        if (fetchTarget != null) {
-                            if (!skipOffsetUpdate) // update offset with remove pending
-                                fetcher.removePendingShmFetchRequest(fetchTarget, tp, records);
-                            else // if dump messages exists, do not update offset
-                                fetcher.removePendingFetchRequest(fetchTarget);
-                        } else {
-                            log.warn("⚠️ Missing fetchTarget for partition: {}", tp);
-                        }
-
-                    }
-
-                    if (!skipOffsetUpdate)
-                        return this.interceptors.onConsume(shmRecords);
+                    return this.interceptors.onConsume(new ConsumerRecords<>(fetch.records(), fetch.nextOffsets()));
                 }
 
             } while (timer.notExpired());
@@ -728,6 +666,9 @@ public class ClassicKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
             this.kafkaConsumerMetrics.recordPollEnd(timer.currentTimeMs());
         }
     }
+
+    Map<TopicPartition, Node> partitionToNodeMap = new HashMap<>();
+    Map<Node, Short> requestVersionByNode = new HashMap<>();
 
     private int sendFetches() {
         offsetFetcher.validatePositionsOnMetadataChange();
@@ -742,6 +683,92 @@ public class ClassicKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
         return updateFetchPositions(timer);
     }
 
+    private void receiveFetchFromShm(){
+        PartitionFetchResult result = SharedMemoryConsumer.readSharedMemoryAsMemoryRecords();
+        if (result != null && result.data != null && result.data.records() != null) {
+            TopicPartition tp = new TopicPartition(result.topic, result.partition);
+            Node fetchTarget = partitionToNodeMap.get(tp);
+            short requestVersion = requestVersionByNode.get(fetchTarget);
+
+            fetcher.removePendingShmFetchRequest(fetchTarget, result, requestVersion);
+        }
+    }
+
+    private void sendFetchesToShm() {
+        Map<Node, FetchSessionHandler.FetchRequestData> pendingRequests = fetcher.getPendingFetchRequests();
+        for (Map.Entry<Node, FetchSessionHandler.FetchRequestData> entry : pendingRequests.entrySet()) {
+            final Node fetchTarget = entry.getKey();
+            final FetchSessionHandler.FetchRequestData data = entry.getValue();
+            final FetchRequest.Builder request = fetcher.createFetchRequest(fetchTarget, data);
+
+            short requestVersion = request.latestAllowedVersion();
+            requestVersionByNode.put(fetchTarget, requestVersion);
+
+            for (TopicPartition tp : data.toSend().keySet()) {
+                partitionToNodeMap.put(tp, fetchTarget);
+            }
+
+            final FetchRequest fetchRequest = request.build(requestVersion);
+
+            if (!fetchRequest.data().topics().isEmpty()) {
+                RequestHeader header = new RequestHeader(
+                    ApiKeys.FETCH,
+                    request.latestAllowedVersion(),
+                    "shared-memory-client",
+                    3847364
+                );
+
+                Send send = fetchRequest.toSend(header);
+
+                if (send instanceof ByteBufferSend) {
+                    ByteBufferSend bufferData = (ByteBufferSend) send;
+
+                    int totalCapacity = 0;
+                    for (ByteBuffer buffer : bufferData.getBuffers()) {
+                        totalCapacity += buffer.remaining();
+                    }
+
+                    ByteBuffer directBuffer = ByteBuffer.allocateDirect(totalCapacity);
+                    for (ByteBuffer buffer : bufferData.getBuffers()) {
+                        directBuffer.put(buffer.duplicate());
+                    }
+
+                    directBuffer.flip();
+                    SharedMemoryConsumer.writeSharedMemoryToServer(directBuffer, totalCapacity);
+                    directBuffer.clear();
+                }
+            }
+        }
+    }
+
+    private Fetch<K, V> pollForFetchesFromShm(Timer timer) {
+        long pollTimeout = coordinator == null ? timer.remainingMs() :
+                Math.min(coordinator.timeToNextPoll(timer.currentTimeMs()), timer.remainingMs());
+
+        // 이미 도착한 데이터 존재 시 즉시 반환
+        final Fetch<K, V> fetch = fetcher.collectFetch();
+        if (!fetch.isEmpty()) {
+            return fetch;
+        }
+
+        // 새 요청 전송
+        sendFetchesToShm();
+
+        if (!cachedSubscriptionHasAllFetchPositions && pollTimeout > retryBackoffMs) {
+            pollTimeout = retryBackoffMs;
+        }
+
+        log.trace("Polling for fetches with timeout {}", pollTimeout);
+
+        Timer pollTimer = time.timer(pollTimeout);
+        timer.update(pollTimer.currentTimeMs());
+
+        // shm에서 데이터 polling
+        receiveFetchFromShm();
+
+        return fetcher.collectFetch();
+    }
+
     /**
      * @throws KafkaException if the rebalance callback throws exception
      */
@@ -750,13 +777,13 @@ public class ClassicKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
                 Math.min(coordinator.timeToNextPoll(timer.currentTimeMs()), timer.remainingMs());
 
         // if data is available already, return it immediately
-        final Fetch<K, V> fetch = fetcher.collectFetch();
+        final Fetch<K, V> fetch = fetcher.collectFetch(); 
         if (!fetch.isEmpty()) {
             return fetch;
         }
 
         // send any new fetches (won't resend pending fetches)
-        sendFetches();
+        sendFetches(); // 새 요청 전송송
 
         // We do not want to be stuck blocking in poll if we are missing some positions
         // since the offset lookup may be backing off after a failure
