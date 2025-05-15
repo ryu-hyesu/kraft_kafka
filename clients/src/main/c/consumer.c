@@ -13,7 +13,10 @@ JNIEXPORT void JNICALL Java_org_apache_kafka_clients_consumer_SharedMemoryConsum
     }
 
     void *nativeBuffer = (*env)->GetDirectBufferAddress(env, buffer);
-    if (!nativeBuffer) return;
+    if (nativeBuffer == NULL) {
+        fprintf(stderr, "ERROR: ByteBuffer is not direct or is NULL\n");
+        return;
+    }
 
     if (buffer_try_enqueue(handle_req.rb, (const char *)nativeBuffer, length)) {
         sem_post(handle_req.semaphore);
@@ -26,7 +29,10 @@ JNIEXPORT void JNICALL Java_org_apache_kafka_clients_consumer_SharedMemoryConsum
     }
 
     void *nativeBuffer = (*env)->GetDirectBufferAddress(env, buffer);
-    if (!nativeBuffer) return;
+    if (nativeBuffer == NULL) {
+        fprintf(stderr, "ERROR: ByteBuffer is not direct or is NULL\n");
+        return;
+    }
 
     if (buffer_try_enqueue(handle_res.rb, (const char *)nativeBuffer, length)) {
         sem_post(handle_res.semaphore);

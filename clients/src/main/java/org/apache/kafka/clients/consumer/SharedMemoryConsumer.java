@@ -209,7 +209,18 @@ import org.apache.kafka.common.serialization.Deserializer;
         long lastStableOffset = buffer.getLong(); // optional
     
         int recordsLen = buffer.getInt();
+        if (recordsLen <= 0 || recordsLen > 512) {
+            System.err.println("❌ Abnormal recordsLen = " + recordsLen);
+            return null;
+        }
+
         ByteBuffer recordsBuf = buffer.slice();
+
+        if (buffer.remaining() < recordsLen + 4) {
+            System.err.println("❌ Buffer underflow: not enough remaining bytes");
+            return null;
+        }        
+
         recordsBuf.limit(recordsLen);
         recordsBuf.rewind();
     
@@ -224,7 +235,7 @@ import org.apache.kafka.common.serialization.Deserializer;
         long timestamp = recordsBuf.getLong();
     
         long baseOffset = nextOffset - 1;
-        ByteBuffer outBuffer = ByteBuffer.allocate(512);
+        ByteBuffer outBuffer = ByteBuffer.allocateDirect(4096);
     
         // 빈 버퍼(512) 할당
         MemoryRecordsBuilder builder = MemoryRecords.builder(

@@ -6,7 +6,7 @@
 #include <semaphore.h>
 #include <stdatomic.h>
 
-#define BUF_COUNT 100
+#define BUF_COUNT 512
 #define BUF_SIZE 1024
 
 typedef struct {
