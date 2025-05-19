@@ -71,6 +71,11 @@ bool buffer_try_enqueue(LockFreeRingBuffer *rb, const char *data, int length) {
         const char *actual_data = data + 4;
         int actual_length = length - 4;
 
+        if (length < 4 || actual_length <= 0 || actual_length > BUF_SIZE - sizeof(int)) {
+            fprintf(stderr, "[SHM] ERROR: Invalid enqueue length=%d (actual=%d)\n", length, actual_length);
+            return false;
+        }
+
         memcpy(rb->data[tail % BUF_COUNT], &actual_length, sizeof(int));
         memcpy(rb->data[tail % BUF_COUNT] + sizeof(int), actual_data, actual_length);
 

@@ -214,9 +214,9 @@ import org.apache.kafka.common.serialization.Deserializer;
             return null;
         }
 
-        ByteBuffer recordsBuf = buffer.slice();
+        ByteBuffer recordsBuf = buffer.slice(); // buffer의 남은 부분 복사
 
-        if (buffer.remaining() < recordsLen + 4) {
+        if (buffer.remaining() < recordsLen) {
             System.err.println("❌ Buffer underflow: not enough remaining bytes");
             return null;
         }        
