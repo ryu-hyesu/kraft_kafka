@@ -1967,3 +1967,6 @@ WARNING: Unmatched cancel notification for request id 515
 2025.05.19 23:56:18 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/SharedMemoryConsumer.java. Using fallback presentation compiler.[0m
 2025.05.19 23:56:21 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/SharedMemoryConsumer.java. Using fallback presentation compiler.[0m
 2025.05.19 23:56:23 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/SharedMemoryConsumer.java. Using fallback presentation compiler.[0m
+2025.05.19 23:59:43 INFO  Shutting down server[0m
+2025.05.19 23:59:43 INFO  shutting down Metals[0m
+2025.05.19 23:59:43 INFO  Exiting server[0m

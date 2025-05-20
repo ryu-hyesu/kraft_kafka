@@ -209,7 +209,7 @@ import org.apache.kafka.common.serialization.Deserializer;
         long lastStableOffset = buffer.getLong(); // optional
     
         int recordsLen = buffer.getInt();
-        if (recordsLen <= 0 || recordsLen > 512) {
+        if (recordsLen <= 0 || recordsLen > 2048) {
             System.err.println("❌ Abnormal recordsLen = " + recordsLen);
             return null;
         }

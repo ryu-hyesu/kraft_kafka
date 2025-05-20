@@ -7,7 +7,7 @@
 #include <stdatomic.h>
 
 #define BUF_COUNT 512
-#define BUF_SIZE 1024
+#define BUF_SIZE 4096
 
 typedef struct {
     _Atomic uint64_t prod_seq;
