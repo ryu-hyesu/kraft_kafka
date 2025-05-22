@@ -252,6 +252,7 @@ import org.apache.kafka.common.serialization.Deserializer;
 
         MemoryRecords records = builder.build();
 
+        // 이 부분 수정 필요함
         // MemoryRecords.readableRecords(buffer); // memoryRecord 형식이 아니라면 절대 해서 안 됨 파싱 안 됨!
     
         FetchResponseData.PartitionData pd = new FetchResponseData.PartitionData();
