@@ -34,7 +34,6 @@ import org.apache.kafka.clients.KafkaClient;
 import org.apache.kafka.clients.Metadata;
 import org.apache.kafka.clients.NetworkClientUtils;
 import org.apache.kafka.clients.consumer.SharedMemoryConsumer.PartitionFetchResult;
-
 import static org.apache.kafka.clients.consumer.internals.FetchUtils.requestMetadataUpdate;
 import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.Node;
@@ -327,37 +326,6 @@ public abstract class AbstractFetch implements Closeable {
                         fetchOffset,
                         requestVersion);
                 fetchBuffer.add(completedFetch);
-        // if (!subscriptions.isAssigned(tp)) {
-        //     log.debug("Not returning fetched records for partition {} since it is no longer assigned", tp);
-        // } else if (!subscriptions.isFetchable(tp)) {
-        //     log.debug("Not returning fetched records for assigned partition {} since it is no longer fetchable", tp);
-        // } else {
-        //     SubscriptionState.FetchPosition position = subscriptions.position(tp);
-        //     if (position == null)
-        //         throw new IllegalStateException("Missing position for fetchable partition " + tp);
-
-        //     if (!partRecords.isEmpty()) {
-        //         long lastOffset = partRecords.get(partRecords.size() - 1).offset();
-        //         long nextOffset = lastOffset + 1;
-
-        //         if (nextOffset > position.offset) {
-        //             SubscriptionState.FetchPosition nextPosition = new SubscriptionState.FetchPosition(
-        //                     nextOffset,
-        //                     Optional.ofNullable(partRecords.get(partRecords.size() - 1).leaderEpoch()).orElse(null),
-        //                     position.currentLeader);
-
-        //             subscriptions.position(tp, nextPosition);
-        //         }
-
-        //         Long partitionLag = subscriptions.partitionLag(tp, fetchConfig.isolationLevel);
-        //         if (partitionLag != null)
-        //             metricsManager.recordPartitionLag(tp, partitionLag);
-
-        //         Long lead = subscriptions.partitionLead(tp);
-        //         if (lead != null)
-        //             metricsManager.recordPartitionLead(tp, lead);
-        //     }
-        // }
 
         nodesWithPendingFetchRequests.remove(fetchTarget.id());
     }
