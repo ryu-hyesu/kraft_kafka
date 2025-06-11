@@ -1970,3 +1970,111 @@ WARNING: Unmatched cancel notification for request id 515
 2025.05.19 23:59:43 INFO  Shutting down server[0m
 2025.05.19 23:59:43 INFO  shutting down Metals[0m
 2025.05.19 23:59:43 INFO  Exiting server[0m
+2025.05.27 11:40:39 INFO  Started: Metals version 1.5.3 in folders '/home/hyesu/kafka' for client Visual Studio Code 1.100.2.[0m
+2025.05.27 11:40:42 INFO  no build target found for /home/hyesu/kafka/core/src/main/scala/kafka/network/SocketServer.scala. Using presentation compiler with project's scala-library version: 3.3.6[0m
+2025.05.27 11:40:50 INFO  no build target found for /home/hyesu/kafka/core/src/main/scala/kafka/network/SocketServer.scala. Using presentation compiler with project's scala-library version: 3.3.6[0m
+May 27, 2025 11:40:50 AM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 2
+2025.05.27 11:40:50 INFO  no build target found for /home/hyesu/kafka/core/src/main/scala/kafka/network/SocketServer.scala. Using presentation compiler with project's scala-library version: 3.3.6[0m
+2025.05.27 11:40:50 INFO  no build target found for /home/hyesu/kafka/core/src/main/scala/kafka/network/SocketServer.scala. Using presentation compiler with project's scala-library version: 3.3.6[0m
+2025.05.27 11:40:52 INFO  no build target found for /home/hyesu/kafka/core/src/main/scala/kafka/network/SocketServer.scala. Using presentation compiler with project's scala-library version: 3.3.6[0m
+2025.05.27 11:40:52 INFO  no build target found for /home/hyesu/kafka/core/src/main/scala/kafka/network/SocketServer.scala. Using presentation compiler with project's scala-library version: 3.3.6[0m
+May 27, 2025 11:40:53 AM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 8
+May 27, 2025 11:40:53 AM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 9
+May 27, 2025 11:40:53 AM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 10
+2025.05.27 11:40:53 INFO  no build target found for /home/hyesu/kafka/core/src/main/scala/kafka/network/SocketServer.scala. Using presentation compiler with project's scala-library version: 3.3.6[0m
+May 27, 2025 11:40:53 AM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 3
+2025.05.27 11:40:53 INFO  no build target found for /home/hyesu/kafka/core/src/main/scala/kafka/network/SocketServer.scala. Using presentation compiler with project's scala-library version: 3.3.6[0m
+May 27, 2025 11:40:53 AM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 11
+2025.05.27 11:40:53 INFO  no build target found for /home/hyesu/kafka/core/src/main/scala/kafka/network/SocketServer.scala. Using presentation compiler with project's scala-library version: 3.3.6[0m
+May 27, 2025 11:40:53 AM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 15
+May 27, 2025 11:40:53 AM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 16
+2025.05.27 11:40:53 INFO  no build target found for /home/hyesu/kafka/core/src/main/scala/kafka/network/SocketServer.scala. Using presentation compiler with project's scala-library version: 3.3.6[0m
+2025.05.27 11:40:54 INFO  no build target found for /home/hyesu/kafka/core/src/main/scala/kafka/network/SocketServer.scala. Using presentation compiler with project's scala-library version: 3.3.6[0m
+2025.05.27 11:40:54 INFO  no build target found for /home/hyesu/kafka/core/src/main/scala/kafka/network/SocketServer.scala. Using presentation compiler with project's scala-library version: 3.3.6[0m
+2025.05.27 22:11:04 INFO  Shutting down server[0m
+2025.05.27 22:11:04 INFO  shutting down Metals[0m
+2025.05.27 22:11:04 INFO  Exiting server[0m
+2025.05.28 16:56:39 INFO  Started: Metals version 1.5.3 in folders '/home/hyesu/kafka' for client Visual Studio Code 1.100.2.[0m
+2025.05.28 16:56:43 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/internals/ClassicKafkaConsumer.java. Using fallback presentation compiler.[0m
+2025.05.28 16:56:51 WARN  Running javac-semanticdb failed for file:///home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/internals/ClassicKafkaConsumer.java. Output:
+[0m
+May 28, 2025 4:56:52 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 2
+2025.05.28 16:56:51 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/internals/ClassicKafkaConsumer.java. Using fallback presentation compiler.[0m
+2025.05.28 16:56:52 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/internals/ClassicKafkaConsumer.java. Using fallback presentation compiler.[0m
+May 28, 2025 4:56:52 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 5
+May 28, 2025 4:56:52 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 6
+May 28, 2025 4:56:52 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 1
+May 28, 2025 4:56:52 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 8
+May 28, 2025 4:56:52 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 4
+2025.05.28 16:56:52 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/internals/ClassicKafkaConsumer.java. Using fallback presentation compiler.[0m
+May 28, 2025 4:56:52 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 3
+May 28, 2025 4:56:52 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 13
+May 28, 2025 4:56:52 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 11
+May 28, 2025 4:56:52 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 10
+2025.05.28 16:56:52 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/internals/Fetcher.java. Using fallback presentation compiler.[0m
+2025.05.28 16:56:53 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/internals/Fetcher.java. Using fallback presentation compiler.[0m
+May 28, 2025 4:56:53 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 14
+2025.05.28 16:56:52 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/internals/Fetcher.java. Using fallback presentation compiler.[0m
+2025.05.28 16:56:53 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/internals/Fetcher.java. Using fallback presentation compiler.[0m
+May 28, 2025 4:56:54 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 20
+May 28, 2025 4:56:54 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 19
+May 28, 2025 4:56:54 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 18
+May 28, 2025 4:56:54 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 15
+2025.05.28 16:56:54 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/SharedMemoryConsumer.java. Using fallback presentation compiler.[0m
+2025.05.28 16:56:54 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/SharedMemoryConsumer.java. Using fallback presentation compiler.[0m
+May 28, 2025 4:56:54 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 23
+2025.05.28 16:56:54 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/SharedMemoryConsumer.java. Using fallback presentation compiler.[0m
+May 28, 2025 4:56:55 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 29
+2025.05.28 16:57:02 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/SharedMemoryConsumer.java. Using fallback presentation compiler.[0m
+2025.05.28 16:57:02 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/SharedMemoryConsumer.java. Using fallback presentation compiler.[0m
+2025.05.28 16:57:02 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/SharedMemoryConsumer.java. Using fallback presentation compiler.[0m
+2025.05.28 16:57:02 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/SharedMemoryConsumer.java. Using fallback presentation compiler.[0m
+May 28, 2025 4:57:02 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 34
+May 28, 2025 4:57:02 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 35
+May 28, 2025 4:57:02 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 36
+2025.05.28 16:57:03 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/SharedMemoryConsumer.java. Using fallback presentation compiler.[0m
+2025.05.28 16:57:03 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/SharedMemoryConsumer.java. Using fallback presentation compiler.[0m
+2025.05.28 16:57:04 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/SharedMemoryConsumer.java. Using fallback presentation compiler.[0m
+2025.05.28 16:57:06 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/SharedMemoryConsumer.java. Using fallback presentation compiler.[0m
+2025.05.28 16:57:16 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/SharedMemoryConsumer.java. Using fallback presentation compiler.[0m
+2025.05.28 16:57:19 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/SharedMemoryConsumer.java. Using fallback presentation compiler.[0m
+2025.05.28 16:57:24 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/SharedMemoryConsumer.java. Using fallback presentation compiler.[0m
+2025.05.28 17:02:20 WARN  no build target for: /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/SharedMemoryConsumer.java[0m
+2025.05.28 17:02:20 WARN  no build target for: /home/hyesu/kafka/core/src/main/scala/kafka/network/SocketServer.scala[0m
+2025.05.28 17:02:20 WARN  no build target for: /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/internals/ClassicKafkaConsumer.java[0m
+2025.05.28 17:02:20 WARN  no build target for: /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/internals/Fetcher.java[0m
+2025.05.28 17:02:20 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/SharedMemoryConsumer.java. Using fallback presentation compiler.[0m
+2025.05.28 17:02:21 INFO  no build target found for /home/hyesu/kafka/core/src/main/scala/kafka/network/SocketServer.scala. Using presentation compiler with project's scala-library version: 3.3.6[0m
+2025.05.28 17:02:21 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/SharedMemoryConsumer.java. Using fallback presentation compiler.[0m
+May 28, 2025 5:02:22 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 51
+2025.05.28 17:02:34 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/SharedMemoryConsumer.java. Using fallback presentation compiler.[0m
+2025.05.28 17:02:34 INFO  no build target found for /home/hyesu/kafka/clients/src/main/java/org/apache/kafka/clients/consumer/SharedMemoryConsumer.java. Using fallback presentation compiler.[0m
