@@ -68,6 +68,15 @@ bool buffer_try_enqueue(LockFreeRingBuffer *rb, const char *data, int length) {
             return false; // full
         }
 
+        // fprintf(stderr, "✅ before write in shm");
+        // for (int i = 0; i < length; ++i) {
+        //     if (i % 16 == 0) fprintf(stderr, "%04X: ", i);
+        //     fprintf(stderr, "%02X ", (unsigned char)data[i]);
+        //     if ((i + 1) % 16 == 0) fprintf(stderr, "\n");
+        // }
+        // if (length % 16 != 0) fprintf(stderr, "\n");
+
+
         const char *actual_data = data + 4;
         int actual_length = length - 4;
 

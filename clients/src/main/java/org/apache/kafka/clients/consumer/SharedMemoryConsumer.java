@@ -17,20 +17,24 @@
 
  package org.apache.kafka.clients.consumer;
 
+ import java.io.File;
  import java.nio.ByteBuffer;
- import java.nio.charset.StandardCharsets;
- import java.util.List;
- import java.util.Map;
+import java.nio.channels.FileChannel;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.StandardOpenOption;
+import java.util.List;
+import java.util.Map;
  import java.util.Optional;
 
  import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.compress.Compression;
- import org.apache.kafka.common.header.internals.RecordHeaders;
+import org.apache.kafka.common.header.internals.RecordHeaders;
  import org.apache.kafka.common.message.FetchResponseData;
+ import org.apache.kafka.common.message.FetchResponseData.AbortedTransaction;
+import org.apache.kafka.common.record.FileRecords;
 import org.apache.kafka.common.record.MemoryRecords;
-import org.apache.kafka.common.record.MemoryRecordsBuilder;
+import org.apache.kafka.common.record.Records;
 import org.apache.kafka.common.record.TimestampType;
-import org.apache.kafka.common.serialization.Deserializer;
+import org.apache.kafka.common.serialization.Deserializer; 
 
  public class SharedMemoryConsumer {
  
@@ -60,6 +64,93 @@ import org.apache.kafka.common.serialization.Deserializer;
              this.lastStableOffset = lastStableOffset;
          }
      }
+
+    public static void buildSharedMemoryResponseBuffer(
+            String topic,
+            int partition,
+            short errorCode,
+            long highWatermark,
+            long lastStableOffset,
+            long logStartOffset,
+            int preferredReadReplica,
+            List<AbortedTransaction> abortedTxns,
+            Records records
+    ) throws Exception {
+        byte[] topicBytes = topic.getBytes(StandardCharsets.UTF_8);
+        ByteBuffer recordBuffer;
+        if (records instanceof FileRecords) {
+            System.out.println("filerecords");
+            FileRecords fr = (FileRecords) records;
+            File file = fr.file();
+
+            long readOffset = fr.channel().position() - fr.sizeInBytes(); // 추정 시작점
+            int size = fr.sizeInBytes();
+
+            try (FileChannel readChannel = FileChannel.open(file.toPath(), StandardOpenOption.READ)) {
+                recordBuffer = ByteBuffer.allocate(size);
+                readChannel.read(recordBuffer, readOffset);
+                recordBuffer.flip(); // position=0, limit=actual size
+            }
+
+        } else if (records instanceof MemoryRecords) {
+            recordBuffer = ((MemoryRecords) records).buffer().duplicate();
+            recordBuffer.rewind(); // 반드시 rewind
+            recordBuffer.limit(recordBuffer.capacity()); // 명확히 limit 지정
+        } else {
+            throw new IllegalArgumentException("Unknown records type: " + records.getClass());
+        }
+
+        // 이제 safety check
+        int topicLen = topicBytes.length;
+        int abortedCount = abortedTxns != null ? abortedTxns.size() : 0;
+        int recordLen = recordBuffer.remaining();
+
+        if (recordLen < 0 || recordLen > 10 * 1024 * 1024) {
+            throw new IllegalStateException("recordLen is abnormal: " + recordLen);
+        }
+
+
+        // 전체 크기 계산
+        int totalSize =
+                4 + // dump
+                4 + topicLen +          // topic length + topic
+                4 +                     // partition
+                2 +                     // errorCode
+                8 + 8 + 8 +             // highWatermark, lastStableOffset, logStartOffset
+                4 +                     // preferredReadReplica
+                4 + abortedCount * 16 + // abortedTxns (count + each 8+8 bytes)
+                4 + recordLen;          // recordBuffer length + data
+
+        ByteBuffer buffer = ByteBuffer.allocateDirect(totalSize);
+
+        buffer.putInt(0);
+        buffer.putInt(topicLen);
+        buffer.put(topicBytes);
+
+        buffer.putInt(partition);
+        buffer.putShort(errorCode);
+        buffer.putLong(highWatermark);
+        buffer.putLong(lastStableOffset);
+        buffer.putLong(logStartOffset);
+        buffer.putInt(preferredReadReplica);
+
+        buffer.putInt(abortedCount);
+        if (abortedTxns != null) {
+            for (AbortedTransaction txn : abortedTxns) {
+                buffer.putLong(txn.producerId());
+                buffer.putLong(txn.firstOffset());
+            }
+        }
+
+        buffer.putInt(recordLen);
+        buffer.put(recordBuffer);
+
+        buffer.flip();
+
+        // dumpBuffer(buffer, 512);
+        // completed.rewind(); // 위치 초기화
+        writeSharedMemoryByBuffer(buffer, totalSize);
+    }
  
     public static void writeSharedMemoryByBuffer(
         String topic,
@@ -117,6 +208,41 @@ import org.apache.kafka.common.serialization.Deserializer;
         buffer.flip();
         writeSharedMemoryByBuffer(buffer, totalSize);
     }
+
+    public static void dumpBuffer(ByteBuffer buffer, int maxBytes) {
+        int limit = Math.min(buffer.remaining(), maxBytes);
+        byte[] data = new byte[limit];
+        
+        buffer.mark(); // 현재 position 저장
+        buffer.get(data); // 읽어옴
+        buffer.reset(); // position 복원
+
+        System.out.println("✅ before write in broker");
+        for (int i = 0; i < data.length; i++) {
+            if (i % 16 == 0) System.out.printf("%04X: ", i);
+            System.out.printf("%02X ", data[i]);
+            if ((i + 1) % 16 == 0) System.out.println();
+        }
+        if (data.length % 16 != 0) System.out.println(); // 줄 끝맞춤
+    }
+
+    public static void dumpBuffer2(ByteBuffer buffer, int maxBytes) {
+        int limit = Math.min(buffer.remaining(), maxBytes);
+        byte[] data = new byte[limit];
+        
+        buffer.mark(); // 현재 position 저장
+        buffer.get(data); // 읽어옴
+        buffer.reset(); // position 복원
+
+        System.out.println("🛠 after read in consumer");
+        for (int i = 0; i < data.length; i++) {
+            if (i % 16 == 0) System.out.printf("%04X: ", i);
+            System.out.printf("%02X ", data[i]);
+            if ((i + 1) % 16 == 0) System.out.println();
+        }
+        if (data.length % 16 != 0) System.out.println(); // 줄 끝맞춤
+    }
+
 
      public static <K, V> ConsumerRecords<K, V> readSharedMemoryBySharedMessage(
              Deserializer<K> keyDeserializer,
@@ -197,73 +323,48 @@ import org.apache.kafka.common.serialization.Deserializer;
         if (buffer == null || buffer.remaining() < 32) return new PartitionFetchResult(null, -1, null);
         
         buffer.rewind();
-    
+
+        // dumpBuffer2(buffer, 64); // 직접 구현한 16진수 버퍼 디버깅 함수 있으면 사용
+
         int topicLen = buffer.getInt();
         byte[] topicBytes = new byte[topicLen];
         buffer.get(topicBytes);
         String topic = new String(topicBytes, StandardCharsets.UTF_8);
-    
+
         int partition = buffer.getInt();
-        long nextOffset = buffer.getLong();
-        long highWatermark = buffer.getLong(); // optional
-        long lastStableOffset = buffer.getLong(); // optional
-    
-        int recordsLen = buffer.getInt();
-        if (recordsLen <= 0 || recordsLen > 2048) {
-            System.err.println("❌ Abnormal recordsLen = " + recordsLen);
-            return null;
+        short errorCode = buffer.getShort();
+        long highWatermark = buffer.getLong();
+        long lastStableOffset = buffer.getLong();
+        long logStartOffset = buffer.getLong();
+        int preferredReadReplica = buffer.getInt();
+        int abortedCount = buffer.getInt();
+        int recordLen = buffer.getInt();
+
+        // System.out.println("🔍 Header: topic=" + topic + ", partition=" + partition);
+        // System.out.println("→ recordLen=" + recordLen + ", buffer.remaining=" + buffer.remaining());
+        
+        MemoryRecords records;
+        if (recordLen <= 0 || buffer.remaining() < recordLen) {
+            records = MemoryRecords.EMPTY;
+        } else {
+            ByteBuffer recordSlice = buffer.slice();
+            recordSlice.limit(recordLen);
+            records = MemoryRecords.readableRecords(recordSlice);
         }
 
-        ByteBuffer recordsBuf = buffer.slice(); // buffer의 남은 부분 복사
-
-        if (buffer.remaining() < recordsLen) {
-            System.err.println("❌ Buffer underflow: not enough remaining bytes");
-            return null;
-        }        
-
-        recordsBuf.limit(recordsLen);
-        recordsBuf.rewind();
-    
-        int keyLen = recordsBuf.getInt();
-        byte[] keyBytes = keyLen >= 0 ? new byte[keyLen] : null;
-        if (keyLen > 0) recordsBuf.get(keyBytes);
-    
-        int valueLen = recordsBuf.getInt();
-        byte[] valueBytes = valueLen >= 0 ? new byte[valueLen] : null;
-        if (valueLen > 0) recordsBuf.get(valueBytes);
-    
-        long timestamp = recordsBuf.getLong();
-    
-        long baseOffset = nextOffset - 1;
-        ByteBuffer outBuffer = ByteBuffer.allocateDirect(4096);
-    
-        // 빈 버퍼(512) 할당
-        MemoryRecordsBuilder builder = MemoryRecords.builder(
-            outBuffer,
-            Compression.NONE,
-            TimestampType.CREATE_TIME,
-            baseOffset
-        );
-
-        // Kafak header | CRC | RecordBatch | Record 포맷으로 채워짐
-        // 또한 builder는 내부적으로 RecordBatch를 생성하고 해당 batch에 record를 연속적으로 추가함
-        builder.append(timestamp, keyBytes, valueBytes); 
-        builder.close();
-
-        MemoryRecords records = builder.build();
-
-        // 이 부분 수정 필요함
-        // MemoryRecords.readableRecords(buffer); // memoryRecord 형식이 아니라면 절대 해서 안 됨 파싱 안 됨!
-    
         FetchResponseData.PartitionData pd = new FetchResponseData.PartitionData();
         pd.setPartitionIndex(partition);
         pd.setErrorCode((short) 0); // Errors.NONE.code()
         pd.setHighWatermark(highWatermark);
         pd.setLastStableOffset(lastStableOffset);
-        pd.setLogStartOffset(-1); // optional
+        pd.setLogStartOffset(logStartOffset); // optional
+        pd.setPreferredReadReplica(preferredReadReplica);
         pd.setRecords(records);
+
+        // System.out.println("on consumer " + pd);
         
         return new PartitionFetchResult(topic, partition, pd);
+        // return new PartitionFetchResult(null, -1, null);
     }
     
      public static native void writeSharedMemoryToServer(ByteBuffer content, int length);

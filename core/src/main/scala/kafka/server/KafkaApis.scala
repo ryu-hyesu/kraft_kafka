@@ -81,7 +81,7 @@ import scala.jdk.CollectionConverters._
 
 // import java.nio.ByteBuffer;
 import org.apache.kafka.clients.consumer.SharedMemoryConsumer
-import org.apache.kafka.common.utils.Utils
+// import org.apache.kafka.common.utils.Utils
 
 /**
  * Logic to handle the various Kafka requests
@@ -615,26 +615,40 @@ class KafkaApis(val requestChannel: RequestChannel,
           .setAbortedTransactions(abortedTransactions)
           .setRecords(data.records)
           .setPreferredReadReplica(data.preferredReadReplica.orElse(FetchResponse.INVALID_PREFERRED_REPLICA_ID))
-        val topic = tp.topic
-        val partition = tp.partition
-        val hw = data.highWatermark
-        val lso = data.lastStableOffset.orElse(-1L)
+        // val topic = tp.topic
+        // val partition = tp.partition
+        // val hw = data.highWatermark
+        // val lso = data.lastStableOffset.orElse(-1L)
 
-        data.records match {
-          case fr: FileRecords =>
-            val batches = fr.batches().asScala
-            processBatches(topic, partition, batches, hw, lso)
+        SharedMemoryConsumer.buildSharedMemoryResponseBuffer(
+          tp.topic,
+          tp.partition,
+          maybeDownConvertStorageError(data.error).code.toShort,
+          data.highWatermark,
+          lastStableOffset,
+          data.logStartOffset,
+          data.preferredReadReplica.orElse(FetchResponse.INVALID_PREFERRED_REPLICA_ID),
+          abortedTransactions,
+          data.records
+        )
 
-          case mr: MemoryRecords =>
-            val batches = mr.batches().asScala
-            processBatches(topic, partition, batches, hw, lso)
 
-          case null =>
-            println(s"[RecordBatch] data.records is null for topic=$topic partition=$partition")
+        // data.records match {
+        //   case fr: FileRecords =>
+        //     // val batches = fr.batches().asScala
 
-          case other =>
-            println(s"[RecordBatch] Unknown record type: ${other.getClass} for topic=$topic partition=$partition")
-        }
+        //     // processBatches(topic, partition, batches, hw, lso)
+
+        //   case mr: MemoryRecords =>
+        //     val batches = mr.batches().asScala
+        //     processBatches(topic, partition, batches, hw, lso)
+
+        //   case null =>
+        //     println(s"[RecordBatch] data.records is null for topic=$topic partition=$partition")
+
+        //   case other =>
+        //     println(s"[RecordBatch] Unknown record type: ${other.getClass} for topic=$topic partition=$partition")
+        // }
 
         if (versionId >= 16) {
           data.error match {
@@ -655,49 +669,50 @@ class KafkaApis(val requestChannel: RequestChannel,
       }
       erroneous.foreach { case (tp, data) => partitions.put(tp, data) }
 
-      def processBatches(
-          topic: String,
-          partition: Int,
-          batches: Iterable[RecordBatch],
-          hw: Long,
-          lso: Long
-      ): Unit = {
-        if (batches.nonEmpty) {
-          batches.foreach { batch =>
-            batch.iterator().asScala.foreach { record =>
-              val offset = record.offset()
-              val timestamp = record.timestamp()
+      // def processBatches(
+      //     topic: String,
+      //     partition: Int,
+      //     batches: Iterable[RecordBatch],
+      //     hw: Long,
+      //     lso: Long
+      // ): Unit = {
 
-              val keyBytes = if (record.hasKey) Utils.toArray(record.key()) else null
-              val valueBytes = if (record.hasValue) Utils.toArray(record.value()) else null
+      //   if (batches.nonEmpty) {
+      //     batches.foreach { batch =>
+      //       batch.iterator().asScala.foreach { record =>
+      //         val offset = record.offset()
+      //         val timestamp = record.timestamp()
 
-              if (valueBytes != null && valueBytes.nonEmpty) {
-                SharedMemoryConsumer.writeSharedMemoryByBuffer(
-                  topic,
-                  partition,
-                  keyBytes,
-                  valueBytes,
-                  timestamp,
-                  offset + 1, // next offset
-                  hw,
-                  lso
-                )
-              }
-            }
-          }
-        } else {
-          SharedMemoryConsumer.writeSharedMemoryByBuffer(
-            topic,
-            partition,
-            null,   // key 없음
-            null,   // value 없음
-            -1L,    // timestamp 없음
-            hw,     // offset: high watermark 사용
-            hw,
-            lso
-          )
-        }
-      }
+      //         val keyBytes = if (record.hasKey) Utils.toArray(record.key()) else null
+      //         val valueBytes = if (record.hasValue) Utils.toArray(record.value()) else null
+
+      //         if (valueBytes != null && valueBytes.nonEmpty) {
+      //           SharedMemoryConsumer.writeSharedMemoryByBuffer(
+      //             topic,
+      //             partition,
+      //             keyBytes,
+      //             valueBytes,
+      //             timestamp,
+      //             offset + 1, // next offset
+      //             hw,
+      //             lso
+      //           )
+      //         }
+      //       }
+      //     }
+      //   } else {
+      //     SharedMemoryConsumer.writeSharedMemoryByBuffer(
+      //       topic,
+      //       partition,
+      //       null,   // key 없음
+      //       null,   // value 없음
+      //       -1L,    // timestamp 없음
+      //       hw,     // offset: high watermark 사용
+      //       hw,
+      //       lso
+      //     )
+      //   }
+      // }
 
       def recordBytesOutMetric(fetchResponse: FetchResponse): Unit = {
         // record the bytes out metrics only when the response is being sent
