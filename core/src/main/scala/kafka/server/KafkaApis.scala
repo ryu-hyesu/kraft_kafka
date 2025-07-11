@@ -387,6 +387,8 @@ class KafkaApis(val requestChannel: RequestChannel,
       }
     }
 
+    
+
     val unauthorizedTopicResponses = mutable.Map[TopicPartition, PartitionResponse]()
     val nonExistingTopicResponses = mutable.Map[TopicPartition, PartitionResponse]()
     val invalidRequestResponses = mutable.Map[TopicPartition, PartitionResponse]()
@@ -527,6 +529,8 @@ class KafkaApis(val requestChannel: RequestChannel,
    * Handle a fetch request
    */
   def handleFetchRequest(request: RequestChannel.Request): Unit = {
+    // if (request.context.connectionId != "dummy-connection-consumer") return
+
     val versionId = request.header.apiVersion
     val clientId = request.header.clientId
     val fetchRequest = request.body[FetchRequest]
@@ -571,8 +575,13 @@ class KafkaApis(val requestChannel: RequestChannel,
       fetchContext.foreachPartition { (topicIdPartition, partitionData) =>
         if (topicIdPartition.topic == null)
           erroneous += topicIdPartition -> FetchResponse.partitionResponse(topicIdPartition, Errors.UNKNOWN_TOPIC_ID)
-        else
+        else{
+          // println(s"[DEBUG] topic=${topicIdPartition.topicPartition.topic}, " +
+          //   s"partition=${topicIdPartition.topicPartition.partition}, " +
+          //   s"fetchOffset=${partitionData.fetchOffset}")
+
           partitionDatas += topicIdPartition -> partitionData
+        }
       }
       val authorizedTopics = authHelper.filterByAuthorized(request.context, READ, TOPIC, partitionDatas)(_._1.topicPartition.topic)
       partitionDatas.foreach { case (topicIdPartition, data) =>
@@ -619,6 +628,13 @@ class KafkaApis(val requestChannel: RequestChannel,
         // val partition = tp.partition
         // val hw = data.highWatermark
         // val lso = data.lastStableOffset.orElse(-1L)
+
+        // val records = data.records
+        // val batchCount = records.batches().iterator().asScala.length
+        // val sizeInBytes = records.sizeInBytes()
+
+        // println(s"✅ consumer로 보내기 전 데이터 : $tp")
+        // println(s"[SHM DEBUG] records.size=${sizeInBytes} bytes, batchCount=${batchCount}")
 
         SharedMemoryConsumer.buildSharedMemoryResponseBuffer(
           tp.topic,

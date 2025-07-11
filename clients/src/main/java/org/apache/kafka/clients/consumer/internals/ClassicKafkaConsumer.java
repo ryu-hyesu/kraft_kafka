@@ -686,6 +686,7 @@ public class ClassicKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
     private void receiveFetchFromShm(){
         PartitionFetchResult result = SharedMemoryConsumer.readSharedMemoryAsMemoryRecords();
         // result = null;
+        // System.out.println("✅classic consumer shm : " + result);
         if (result != null && result.data != null && result.data.records() != null) {
             TopicPartition tp = new TopicPartition(result.topic, result.partition);
             Node fetchTarget = partitionToNodeMap.get(tp);

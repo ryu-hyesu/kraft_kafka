@@ -79,7 +79,7 @@ import org.apache.kafka.common.serialization.Deserializer;
         byte[] topicBytes = topic.getBytes(StandardCharsets.UTF_8);
         ByteBuffer recordBuffer;
         if (records instanceof FileRecords) {
-            System.out.println("filerecords");
+            
             FileRecords fr = (FileRecords) records;
             File file = fr.file();
 
@@ -90,6 +90,8 @@ import org.apache.kafka.common.serialization.Deserializer;
                 recordBuffer = ByteBuffer.allocate(size);
                 readChannel.read(recordBuffer, readOffset);
                 recordBuffer.flip(); // position=0, limit=actual size
+            
+                // dumpBuffer(recordBuffer, 512);
             }
 
         } else if (records instanceof MemoryRecords) {
@@ -146,6 +148,7 @@ import org.apache.kafka.common.serialization.Deserializer;
         buffer.put(recordBuffer);
 
         buffer.flip();
+
 
         // dumpBuffer(buffer, 512);
         // completed.rewind(); // 위치 초기화
@@ -324,7 +327,7 @@ import org.apache.kafka.common.serialization.Deserializer;
         
         buffer.rewind();
 
-        // dumpBuffer2(buffer, 64); // 직접 구현한 16진수 버퍼 디버깅 함수 있으면 사용
+        // dumpBuffer2(buffer, 200); // 직접 구현한 16진수 버퍼 디버깅 함수 있으면 사용
 
         int topicLen = buffer.getInt();
         byte[] topicBytes = new byte[topicLen];
@@ -340,16 +343,30 @@ import org.apache.kafka.common.serialization.Deserializer;
         int abortedCount = buffer.getInt();
         int recordLen = buffer.getInt();
 
-        // System.out.println("🔍 Header: topic=" + topic + ", partition=" + partition);
-        // System.out.println("→ recordLen=" + recordLen + ", buffer.remaining=" + buffer.remaining());
+        int recordStartPos = buffer.position(); // position after recordLen
+        // System.err.printf("recordStartPos=%d, recordLen=%d, buffer.limit()=%d\n",
+            // recordStartPos, recordLen, buffer.limit());
+
         
         MemoryRecords records;
         if (recordLen <= 0 || buffer.remaining() < recordLen) {
             records = MemoryRecords.EMPTY;
         } else {
-            ByteBuffer recordSlice = buffer.slice();
-            recordSlice.limit(recordLen);
-            records = MemoryRecords.readableRecords(recordSlice);
+            ByteBuffer recordSlice = buffer.duplicate();
+            
+            recordSlice.position(recordStartPos);
+            recordSlice.limit(recordStartPos + recordLen);
+            recordSlice = recordSlice.slice(); // ✔ this gives position=0, limit=recordLen
+
+            debugRecordSlice(recordSlice, 128);
+            // System.err.printf("get(0) = 0x%02X, get(1) = 0x%02X\n", recordSlice.get(0), recordSlice.get(1));
+
+            if (recordLen > 10_000_000) {
+                System.err.printf("[SHM] Suspicious recordLen=%d → skipping record\n", recordLen);
+                records = MemoryRecords.EMPTY;
+            } else {
+                records = MemoryRecords.readableRecords(recordSlice); // ✅ actual parsing
+            }
         }
 
         FetchResponseData.PartitionData pd = new FetchResponseData.PartitionData();
@@ -360,12 +377,26 @@ import org.apache.kafka.common.serialization.Deserializer;
         pd.setLogStartOffset(logStartOffset); // optional
         pd.setPreferredReadReplica(preferredReadReplica);
         pd.setRecords(records);
-
-        // System.out.println("on consumer " + pd);
         
         return new PartitionFetchResult(topic, partition, pd);
-        // return new PartitionFetchResult(null, -1, null);
     }
+
+    private static void debugRecordSlice(ByteBuffer recordSlice, int maxBytes) {
+        ByteBuffer copy = recordSlice.duplicate(); // 포지션 영향 안주게 복제
+        
+        int len = Math.min(copy.remaining(), maxBytes);
+        byte[] data = new byte[len];
+        copy.get(data);
+        
+        System.err.printf("🧪 [SHM] Dumping %d bytes before parsing:\n", len);
+        for (int i = 0; i < len; i++) {
+            if (i % 16 == 0) System.err.printf("%04X: ", i);
+            System.err.printf("%02X ", data[i]);
+            if ((i + 1) % 16 == 0) System.err.println();
+        }
+        if (len % 16 != 0) System.err.println();
+    }
+
     
      public static native void writeSharedMemoryToServer(ByteBuffer content, int length);
      public static native void writeSharedMemoryByBuffer(ByteBuffer content, int length);

@@ -7,13 +7,23 @@
 #include <stdatomic.h>
 
 #define BUF_COUNT 512
-#define BUF_SIZE 4096
+#define BUF_SIZE 10000
+
+#define BUF_EMPTY 0
+#define BUF_WAITING 1
+#define BUF_READY 2
+#define BUF_READING 3
+
+typedef struct {
+    _Atomic uint64_t seq;
+    char data[BUF_SIZE];
+} __attribute__((aligned(64))) Buf;
 
 typedef struct {
     _Atomic uint64_t prod_seq;
     _Atomic uint64_t cons_seq;
-    char data[BUF_COUNT][BUF_SIZE];
-} LockFreeRingBuffer;
+    Buf buf[BUF_COUNT];
+} __attribute__((aligned(64))) LockFreeRingBuffer;
 
 typedef struct {
     LockFreeRingBuffer *rb;
