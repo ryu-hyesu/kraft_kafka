@@ -17,7 +17,6 @@
 package org.apache.kafka.clients.consumer.internals;
 
 import java.net.InetSocketAddress;
-import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collection;
@@ -39,7 +38,6 @@ import java.util.stream.Collectors;
 import org.apache.kafka.clients.ApiVersions;
 import org.apache.kafka.clients.ClientUtils;
 import org.apache.kafka.clients.CommonClientConfigs;
-import org.apache.kafka.clients.FetchSessionHandler;
 import org.apache.kafka.clients.GroupRebalanceConfig;
 import org.apache.kafka.clients.KafkaClient;
 import org.apache.kafka.clients.Metadata;
@@ -58,8 +56,6 @@ import org.apache.kafka.clients.consumer.NoOffsetForPartitionException;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.consumer.OffsetAndTimestamp;
 import org.apache.kafka.clients.consumer.OffsetCommitCallback;
-import org.apache.kafka.clients.consumer.SharedMemoryConsumer;
-import org.apache.kafka.clients.consumer.SharedMemoryConsumer.PartitionFetchResult;
 import org.apache.kafka.clients.consumer.SubscriptionPattern;
 import static org.apache.kafka.clients.consumer.internals.ConsumerUtils.CONSUMER_JMX_PREFIX;
 import static org.apache.kafka.clients.consumer.internals.ConsumerUtils.CONSUMER_METRIC_GROUP_PREFIX;
@@ -77,7 +73,6 @@ import org.apache.kafka.common.IsolationLevel;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.Metric;
 import org.apache.kafka.common.MetricName;
-import org.apache.kafka.common.Node;
 import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
@@ -88,11 +83,6 @@ import org.apache.kafka.common.internals.ClusterResourceListeners;
 import org.apache.kafka.common.metrics.KafkaMetric;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.metrics.MetricsReporter;
-import org.apache.kafka.common.network.ByteBufferSend;
-import org.apache.kafka.common.network.Send;
-import org.apache.kafka.common.protocol.ApiKeys;
-import org.apache.kafka.common.requests.FetchRequest;
-import org.apache.kafka.common.requests.RequestHeader;
 import org.apache.kafka.common.serialization.Deserializer;
 import org.apache.kafka.common.telemetry.internals.ClientTelemetryReporter;
 import org.apache.kafka.common.telemetry.internals.ClientTelemetryUtils;
@@ -642,14 +632,24 @@ public class ClassicKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
                 throw new IllegalStateException("Consumer is not subscribed to any topics or assigned any partitions");
             }
 
-            
             do {
                 client.maybeTriggerWakeup();
 
+                // try to update assignment metadata BUT do not need to block on the timer for join group
                 updateAssignmentMetadataIfNeeded(timer, false);
-                
-                final Fetch<K, V> fetch = pollForFetchesFromShm(timer);
+
+                final Fetch<K, V> fetch = pollForFetches(timer);
                 if (!fetch.isEmpty()) {
+                    // before returning the fetched records, we can send off the next round of fetches
+                    // and avoid block waiting for their responses to enable pipelining while the user
+                    // is handling the fetched records.
+                    //
+                    // NOTE: since the consumed position has already been updated, we must not allow
+                    // wakeups or any other errors to be triggered prior to returning the fetched records.
+                    if (sendFetches() > 0 || client.hasPendingRequests()) {
+                        client.transmitSends();
+                    }
+
                     if (fetch.records().isEmpty()) {
                         log.trace("Returning empty records from `poll()` "
                                 + "since the consumer's position has advanced for at least one topic partition");
@@ -657,7 +657,6 @@ public class ClassicKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
 
                     return this.interceptors.onConsume(new ConsumerRecords<>(fetch.records(), fetch.nextOffsets()));
                 }
-
             } while (timer.notExpired());
 
             return ConsumerRecords.empty();
@@ -666,9 +665,6 @@ public class ClassicKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
             this.kafkaConsumerMetrics.recordPollEnd(timer.currentTimeMs());
         }
     }
-
-    Map<TopicPartition, Node> partitionToNodeMap = new HashMap<>();
-    Map<Node, Short> requestVersionByNode = new HashMap<>();
 
     private int sendFetches() {
         offsetFetcher.validatePositionsOnMetadataChange();
@@ -683,94 +679,6 @@ public class ClassicKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
         return updateFetchPositions(timer);
     }
 
-    private void receiveFetchFromShm(){
-        PartitionFetchResult result = SharedMemoryConsumer.readSharedMemoryAsMemoryRecords();
-        // result = null;
-        // System.out.println("✅classic consumer shm : " + result);
-        if (result != null && result.data != null && result.data.records() != null) {
-            TopicPartition tp = new TopicPartition(result.topic, result.partition);
-            Node fetchTarget = partitionToNodeMap.get(tp);
-            short requestVersion = requestVersionByNode.get(fetchTarget);
-
-            fetcher.removePendingShmFetchRequest(fetchTarget, result, requestVersion);
-        }
-    }
-
-    private void sendFetchesToShm() {
-        Map<Node, FetchSessionHandler.FetchRequestData> pendingRequests = fetcher.getPendingFetchRequests();
-        for (Map.Entry<Node, FetchSessionHandler.FetchRequestData> entry : pendingRequests.entrySet()) {
-            final Node fetchTarget = entry.getKey();
-            final FetchSessionHandler.FetchRequestData data = entry.getValue();
-            final FetchRequest.Builder request = fetcher.createFetchRequest(fetchTarget, data);
-
-            short requestVersion = request.latestAllowedVersion();
-            requestVersionByNode.put(fetchTarget, requestVersion);
-
-            for (TopicPartition tp : data.toSend().keySet()) {
-                partitionToNodeMap.put(tp, fetchTarget);
-            }
-
-            final FetchRequest fetchRequest = request.build(requestVersion);
-
-            if (!fetchRequest.data().topics().isEmpty()) {
-                RequestHeader header = new RequestHeader(
-                    ApiKeys.FETCH,
-                    request.latestAllowedVersion(),
-                    "shared-memory-client",
-                    3847364
-                );
-
-                Send send = fetchRequest.toSend(header);
-
-                if (send instanceof ByteBufferSend) {
-                    ByteBufferSend bufferData = (ByteBufferSend) send;
-
-                    int totalCapacity = 0;
-                    for (ByteBuffer buffer : bufferData.getBuffers()) {
-                        totalCapacity += buffer.remaining();
-                    }
-
-                    ByteBuffer directBuffer = ByteBuffer.allocateDirect(totalCapacity);
-                    for (ByteBuffer buffer : bufferData.getBuffers()) {
-                        directBuffer.put(buffer.duplicate());
-                    }
-
-                    directBuffer.flip();
-                    SharedMemoryConsumer.writeSharedMemoryToServer(directBuffer, totalCapacity);
-                    directBuffer.clear();
-                }
-            }
-        }
-    }
-
-    private Fetch<K, V> pollForFetchesFromShm(Timer timer) {
-        long pollTimeout = coordinator == null ? timer.remainingMs() :
-                Math.min(coordinator.timeToNextPoll(timer.currentTimeMs()), timer.remainingMs());
-
-        // 이미 도착한 데이터 존재 시 즉시 반환
-        final Fetch<K, V> fetch = fetcher.collectFetch();
-        if (!fetch.isEmpty()) {
-            return fetch;
-        }
-
-        // 새 요청 전송
-        sendFetchesToShm();
-
-        if (!cachedSubscriptionHasAllFetchPositions && pollTimeout > retryBackoffMs) {
-            pollTimeout = retryBackoffMs;
-        }
-
-        log.trace("Polling for fetches with timeout {}", pollTimeout);
-
-        Timer pollTimer = time.timer(pollTimeout);
-        timer.update(pollTimer.currentTimeMs());
-
-        // shm에서 데이터 polling
-        receiveFetchFromShm();
-
-        return fetcher.collectFetch();
-    }
-
     /**
      * @throws KafkaException if the rebalance callback throws exception
      */
@@ -779,13 +687,13 @@ public class ClassicKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
                 Math.min(coordinator.timeToNextPoll(timer.currentTimeMs()), timer.remainingMs());
 
         // if data is available already, return it immediately
-        final Fetch<K, V> fetch = fetcher.collectFetch(); 
+        final Fetch<K, V> fetch = fetcher.collectFetch();
         if (!fetch.isEmpty()) {
             return fetch;
         }
 
         // send any new fetches (won't resend pending fetches)
-        sendFetches(); // 새 요청 전송송
+        sendFetches();
 
         // We do not want to be stuck blocking in poll if we are missing some positions
         // since the offset lookup may be backing off after a failure

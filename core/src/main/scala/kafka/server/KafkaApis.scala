@@ -79,10 +79,6 @@ import scala.collection.mutable.ArrayBuffer
 import scala.collection.{Map, Seq, Set, mutable}
 import scala.jdk.CollectionConverters._
 
-// import java.nio.ByteBuffer;
-import org.apache.kafka.clients.consumer.SharedMemoryConsumer
-// import org.apache.kafka.common.utils.Utils
-
 /**
  * Logic to handle the various Kafka requests
  */
@@ -387,8 +383,6 @@ class KafkaApis(val requestChannel: RequestChannel,
       }
     }
 
-    
-
     val unauthorizedTopicResponses = mutable.Map[TopicPartition, PartitionResponse]()
     val nonExistingTopicResponses = mutable.Map[TopicPartition, PartitionResponse]()
     val invalidRequestResponses = mutable.Map[TopicPartition, PartitionResponse]()
@@ -529,8 +523,6 @@ class KafkaApis(val requestChannel: RequestChannel,
    * Handle a fetch request
    */
   def handleFetchRequest(request: RequestChannel.Request): Unit = {
-    // if (request.context.connectionId != "dummy-connection-consumer") return
-
     val versionId = request.header.apiVersion
     val clientId = request.header.clientId
     val fetchRequest = request.body[FetchRequest]
@@ -575,13 +567,8 @@ class KafkaApis(val requestChannel: RequestChannel,
       fetchContext.foreachPartition { (topicIdPartition, partitionData) =>
         if (topicIdPartition.topic == null)
           erroneous += topicIdPartition -> FetchResponse.partitionResponse(topicIdPartition, Errors.UNKNOWN_TOPIC_ID)
-        else{
-          // println(s"[DEBUG] topic=${topicIdPartition.topicPartition.topic}, " +
-          //   s"partition=${topicIdPartition.topicPartition.partition}, " +
-          //   s"fetchOffset=${partitionData.fetchOffset}")
-
+        else
           partitionDatas += topicIdPartition -> partitionData
-        }
       }
       val authorizedTopics = authHelper.filterByAuthorized(request.context, READ, TOPIC, partitionDatas)(_._1.topicPartition.topic)
       partitionDatas.foreach { case (topicIdPartition, data) =>
@@ -624,47 +611,8 @@ class KafkaApis(val requestChannel: RequestChannel,
           .setAbortedTransactions(abortedTransactions)
           .setRecords(data.records)
           .setPreferredReadReplica(data.preferredReadReplica.orElse(FetchResponse.INVALID_PREFERRED_REPLICA_ID))
-        // val topic = tp.topic
-        // val partition = tp.partition
-        // val hw = data.highWatermark
-        // val lso = data.lastStableOffset.orElse(-1L)
 
-        // val records = data.records
-        // val batchCount = records.batches().iterator().asScala.length
-        // val sizeInBytes = records.sizeInBytes()
-
-        // println(s"✅ consumer로 보내기 전 데이터 : $tp")
-        // println(s"[SHM DEBUG] records.size=${sizeInBytes} bytes, batchCount=${batchCount}")
-
-        SharedMemoryConsumer.buildSharedMemoryResponseBuffer(
-          tp.topic,
-          tp.partition,
-          maybeDownConvertStorageError(data.error).code.toShort,
-          data.highWatermark,
-          lastStableOffset,
-          data.logStartOffset,
-          data.preferredReadReplica.orElse(FetchResponse.INVALID_PREFERRED_REPLICA_ID),
-          abortedTransactions,
-          data.records
-        )
-
-
-        // data.records match {
-        //   case fr: FileRecords =>
-        //     // val batches = fr.batches().asScala
-
-        //     // processBatches(topic, partition, batches, hw, lso)
-
-        //   case mr: MemoryRecords =>
-        //     val batches = mr.batches().asScala
-        //     processBatches(topic, partition, batches, hw, lso)
-
-        //   case null =>
-        //     println(s"[RecordBatch] data.records is null for topic=$topic partition=$partition")
-
-        //   case other =>
-        //     println(s"[RecordBatch] Unknown record type: ${other.getClass} for topic=$topic partition=$partition")
-        // }
+        // Write Shared Memory
 
         if (versionId >= 16) {
           data.error match {
@@ -684,51 +632,6 @@ class KafkaApis(val requestChannel: RequestChannel,
         partitions.put(tp, partitionData)
       }
       erroneous.foreach { case (tp, data) => partitions.put(tp, data) }
-
-      // def processBatches(
-      //     topic: String,
-      //     partition: Int,
-      //     batches: Iterable[RecordBatch],
-      //     hw: Long,
-      //     lso: Long
-      // ): Unit = {
-
-      //   if (batches.nonEmpty) {
-      //     batches.foreach { batch =>
-      //       batch.iterator().asScala.foreach { record =>
-      //         val offset = record.offset()
-      //         val timestamp = record.timestamp()
-
-      //         val keyBytes = if (record.hasKey) Utils.toArray(record.key()) else null
-      //         val valueBytes = if (record.hasValue) Utils.toArray(record.value()) else null
-
-      //         if (valueBytes != null && valueBytes.nonEmpty) {
-      //           SharedMemoryConsumer.writeSharedMemoryByBuffer(
-      //             topic,
-      //             partition,
-      //             keyBytes,
-      //             valueBytes,
-      //             timestamp,
-      //             offset + 1, // next offset
-      //             hw,
-      //             lso
-      //           )
-      //         }
-      //       }
-      //     }
-      //   } else {
-      //     SharedMemoryConsumer.writeSharedMemoryByBuffer(
-      //       topic,
-      //       partition,
-      //       null,   // key 없음
-      //       null,   // value 없음
-      //       -1L,    // timestamp 없음
-      //       hw,     // offset: high watermark 사용
-      //       hw,
-      //       lso
-      //     )
-      //   }
-      // }
 
       def recordBytesOutMetric(fetchResponse: FetchResponse): Unit = {
         // record the bytes out metrics only when the response is being sent
@@ -785,6 +688,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         }
 
         recordBytesOutMetric(fetchResponse)
+        // Send the response immediately.
         requestChannel.sendResponse(request, fetchResponse, None)
       }
     }
@@ -1569,6 +1473,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     // the callback for sending a DeleteRecordsResponse
     def sendResponseCallback(authorizedTopicResponses: Map[TopicPartition, DeleteRecordsPartitionResult]): Unit = {
       val mergedResponseStatus = authorizedTopicResponses ++ unauthorizedTopicResponses ++ nonExistingTopicResponses
+      println(s"sendResponseCallback : ${mergedResponseStatus}")
       mergedResponseStatus.foreachEntry { (topicPartition, status) =>
         if (status.errorCode != Errors.NONE.code) {
           debug("DeleteRecordsRequest with correlation id %d from client %s on partition %s failed due to %s".format(

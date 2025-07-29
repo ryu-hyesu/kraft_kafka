@@ -46,11 +46,11 @@ JNIEXPORT jobject JNICALL Java_org_apache_kafka_clients_consumer_SharedMemoryCon
 
     if (sem_trywait(handle_req.semaphore) == -1) return NULL;
 
-    char buffer[BUF_SIZE];
+    const char *ptr;
     int length;
-    if (!buffer_try_dequeue(handle_req.rb, buffer, &length)) return NULL;
+    if (!buffer_try_dequeue(handle_req.rb, &ptr, &length)) return NULL;
 
-    return (*env)->NewDirectByteBuffer(env, memcpy(malloc(length), buffer, length), length);
+    return (*env)->NewDirectByteBuffer(env, (void*)ptr, length);
 }
 
 JNIEXPORT jobject JNICALL Java_org_apache_kafka_clients_consumer_SharedMemoryConsumer_readSharedMemoryByConsumer(JNIEnv *env, jobject obj) {
@@ -60,9 +60,10 @@ JNIEXPORT jobject JNICALL Java_org_apache_kafka_clients_consumer_SharedMemoryCon
 
     if (sem_trywait(handle_res.semaphore) == -1) return NULL;
 
-    char buffer[BUF_SIZE];
+    const char *ptr;
     int length;
-    if (!buffer_try_dequeue(handle_res.rb, buffer, &length)) return NULL;
+    if (!buffer_try_dequeue(handle_req.rb, &ptr, &length)) return NULL;
 
-    return (*env)->NewDirectByteBuffer(env, memcpy(malloc(length), buffer, length), length);
+    return (*env)->NewDirectByteBuffer(env, (void*)ptr, length);
+
 }

@@ -24,6 +24,7 @@ public class SharedMemoryProducer {
         System.loadLibrary("sharedmemory");
     }
 
-    public static native void writeSharedMemoryByBuffer(ByteBuffer content, int length);
+    public static native ByteBuffer allocateSharedMemoryByBuffer();
+    public static native void commitSharedMemoryByBuffer(ByteBuffer content, int length);
     public static native ByteBuffer readSharedMemoryByBuffer();
 }

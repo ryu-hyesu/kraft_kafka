@@ -16,6 +16,20 @@
  */
 package org.apache.kafka.clients.producer.internals;
 
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
 import org.apache.kafka.clients.ApiVersions;
 import org.apache.kafka.clients.ClientRequest;
 import org.apache.kafka.clients.ClientResponse;
@@ -24,6 +38,7 @@ import org.apache.kafka.clients.Metadata;
 import org.apache.kafka.clients.MetadataSnapshot;
 import org.apache.kafka.clients.NetworkClientUtils;
 import org.apache.kafka.clients.RequestCompletionHandler;
+import org.apache.kafka.clients.producer.SharedMemoryProducer;
 import org.apache.kafka.common.InvalidRecordException;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.MetricName;
@@ -45,6 +60,8 @@ import org.apache.kafka.common.metrics.Sensor;
 import org.apache.kafka.common.metrics.stats.Avg;
 import org.apache.kafka.common.metrics.stats.Max;
 import org.apache.kafka.common.metrics.stats.Meter;
+import org.apache.kafka.common.network.ByteBufferSend;
+import org.apache.kafka.common.network.Send;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.RecordBatch;
@@ -52,31 +69,11 @@ import org.apache.kafka.common.requests.AbstractRequest;
 import org.apache.kafka.common.requests.FindCoordinatorRequest;
 import org.apache.kafka.common.requests.ProduceRequest;
 import org.apache.kafka.common.requests.ProduceResponse;
+import static org.apache.kafka.common.requests.ProduceResponse.INVALID_OFFSET;
 import org.apache.kafka.common.requests.RequestHeader;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
-
-import org.apache.kafka.common.network.ByteBufferSend;
-import org.apache.kafka.common.network.Send;
-import org.apache.kafka.clients.producer.SharedMemoryProducer;
-import java.nio.ByteBuffer;
-
 import org.slf4j.Logger;
-
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.Set;
-import java.util.function.Function;
-import java.util.stream.Collectors;
-
-import static org.apache.kafka.common.requests.ProduceResponse.INVALID_OFFSET;
 
 /**
  * The background thread that handles the sending of produce requests to the Kafka cluster. This thread makes metadata
@@ -905,6 +902,7 @@ public class Sender implements Runnable {
         ClientRequest clientRequest = client.newClientRequest(nodeId, requestBuilder, now, acks != 0,
                 requestTimeoutMs, callback);
 
+        // Shared Memory Hook
         AbstractRequest request = requestBuilder.build(requestBuilder.latestAllowedVersion());
         RequestHeader header = clientRequest.makeHeader(request.version());
         Send send = request.toSend(header);
@@ -918,20 +916,22 @@ public class Sender implements Runnable {
             }
 
             // 전체 데이터를 담을 directBuffer 생성
-            ByteBuffer directBuffer = ByteBuffer.allocateDirect(totalCapacity);
+            ByteBuffer directBuffer = SharedMemoryProducer.allocateSharedMemoryByBuffer();
+            if (directBuffer == null) {
+                throw new IllegalStateException("❌ No available shared memory slot (shm_pool exhausted)");
+            }
+            // ByteBuffer.allocateDirect(totalCapacity);
             
             // 각 buffer의 데이터를 directBuffer에 합침
             for (ByteBuffer buffer : bufferData.getBuffers()) {
-                if (!buffer.isDirect()) {
-                    directBuffer.put(buffer.duplicate());  // 각 버퍼의 데이터를 directBuffer에 추가
-                }
+                directBuffer.put(buffer.duplicate());  // regardless of direct or not
             }
             
             directBuffer.flip();  // 읽기 모드로 전환
             
             // 한 번에 쓰기
-            SharedMemoryProducer.writeSharedMemoryByBuffer(directBuffer, directBuffer.capacity());
-            directBuffer.clear();  // directBuffer 초기화
+            SharedMemoryProducer.commitSharedMemoryByBuffer(directBuffer, directBuffer.capacity());
+            // directBuffer.clear();  // directBuffer 초기화
         }
 
         // client.send(clientRequest, now); // NETWORK

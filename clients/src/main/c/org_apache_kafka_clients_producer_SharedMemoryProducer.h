@@ -9,10 +9,18 @@ extern "C" {
 #endif
 /*
  * Class:     org_apache_kafka_clients_producer_SharedMemoryProducer
- * Method:    writeSharedMemoryByBuffer
+ * Method:    allocateSharedMemoryByBuffer
+ * Signature: ()Ljava/nio/ByteBuffer;
+ */
+JNIEXPORT jobject JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryProducer_allocateSharedMemoryByBuffer
+  (JNIEnv *, jclass);
+
+/*
+ * Class:     org_apache_kafka_clients_producer_SharedMemoryProducer
+ * Method:    commitSharedMemoryByBuffer
  * Signature: (Ljava/nio/ByteBuffer;I)V
  */
-JNIEXPORT void JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryProducer_writeSharedMemoryByBuffer
+JNIEXPORT void JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryProducer_commitSharedMemoryByBuffer
   (JNIEnv *, jclass, jobject, jint);
 
 /*

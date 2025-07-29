@@ -2,28 +2,18 @@
 #define SHARED_MEMORY_H
 
 #include <stdbool.h>
-#include <stdint.h>
 #include <semaphore.h>
 #include <stdatomic.h>
+#include <stdint.h>
 
-#define BUF_COUNT 512
-#define BUF_SIZE 10000
-
-#define BUF_EMPTY 0
-#define BUF_WAITING 1
-#define BUF_READY 2
-#define BUF_READING 3
-
-typedef struct {
-    _Atomic uint64_t seq;
-    char data[BUF_SIZE];
-} __attribute__((aligned(64))) Buf;
+#define BUF_COUNT 128
+#define BUF_SIZE 4096
 
 typedef struct {
     _Atomic uint64_t prod_seq;
     _Atomic uint64_t cons_seq;
-    Buf buf[BUF_COUNT];
-} __attribute__((aligned(64))) LockFreeRingBuffer;
+    uint32_t offset[BUF_COUNT];   // ✅ 메시지를 가리키는 포인터
+} LockFreeRingBuffer;
 
 typedef struct {
     LockFreeRingBuffer *rb;
@@ -33,7 +23,7 @@ typedef struct {
 int initialize_shared_memory(SharedMemoryHandle *handle, const char *shm_name, const char *sem_name, bool create);
 void cleanup_shared_memory(SharedMemoryHandle *handle, const char *shm_name, const char *sem_name);
 bool buffer_try_enqueue(LockFreeRingBuffer *rb, const char *data, int length);
-bool buffer_try_dequeue(LockFreeRingBuffer *rb, char *out, int *out_length);
+bool buffer_try_dequeue(LockFreeRingBuffer *rb, const char **out_ptr, int *out_length);
+
 
 #endif
-
