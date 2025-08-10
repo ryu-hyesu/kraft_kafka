@@ -7,11 +7,25 @@
 #include <stdalign.h>
 #include "shared_memory.h"
 
-#define POOL_COUNT 128
+#define POOL_COUNT 1024
 #define SAMPLE_SIZE BUF_SIZE
 
 // header
-extern unsigned char (*shm_pool)[SAMPLE_SIZE];
+// extern unsigned char (*shm_pool)[SAMPLE_SIZE];
+
+typedef struct {
+    _Atomic uint32_t head;
+    _Atomic uint32_t tail;
+    alignas(64) uint32_t slots[POOL_COUNT];
+    _Atomic uint32_t init_magic;
+} shm_pool_meta_t;
+
+typedef struct{
+    shm_pool_meta_t meta;
+    alignas(64) unsigned char data[POOL_COUNT][SAMPLE_SIZE];
+} shm_pool_region_t;
+
+extern shm_pool_region_t *g_pool;
 
 // lock-free freelist ringbuffer 구조체
 typedef struct {
@@ -23,6 +37,7 @@ typedef struct {
 
     alignas(64) uint32_t slots[POOL_COUNT];
 } shm_memory_pool;
+
 
 int init_shared_memory_pool();  
 unsigned char* shm_pool_get();         // 메모리 할당 (freelist pop)

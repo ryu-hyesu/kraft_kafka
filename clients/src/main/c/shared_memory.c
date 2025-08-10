@@ -8,6 +8,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <inttypes.h>   // PRIu64 매크로 사용을 위해 필요
+
+
+_Atomic uint64_t enq_success_count = 0;
+_Atomic uint64_t deq_success_count = 0;
 
 int initialize_memory_pool() {
     if (init_shared_memory_pool() != 0) {
@@ -73,109 +78,136 @@ static inline int read_be32(const unsigned char *p) {
 }
 
 char* offset_to_ptr(uint32_t offset) {
-    return (char*)(&shm_pool[0][0]) + offset;
+    return (char*)(&g_pool->data[0][0]) + offset;
 }
 
 uint32_t ptr_to_offset(const char* ptr) {
-    return (uint32_t)(ptr - (char*)(&shm_pool[0][0]));
+    return (uint32_t)(ptr - (char*)(&g_pool->data[0][0]));
 }
+
+static inline void cpu_relax(void) {
+#if defined(__x86_64__) || defined(__i386__)
+    __builtin_ia32_pause();
+#elif defined(__aarch64__)
+    __asm__ __volatile__("yield");
+#else
+    ; // no-op
+#endif
+}
+
 
 
 bool buffer_try_enqueue(LockFreeRingBuffer *rb, const char *data, int length) {
-    uint64_t head, tail;
-
-    if (!data) {
-        fprintf(stderr, "❌ [ENQ] data pointer is NULL\n");
-        return false;
-    }
-    if (length < 4 || length > SAMPLE_SIZE) {
-        fprintf(stderr, "❌ [ENQ] invalid length: %d\n", length);
+    if (!data || length < 4 || length > SAMPLE_SIZE || !g_pool->data) {
+        fprintf(stderr, "❌ [ENQ] invalid input (data=%p, len=%d, shm_pool=%p)\n", data, length, g_pool->data);
         return false;
     }
 
-    if (!shm_pool) {
-        fprintf(stderr, "❌ [ENQ] shm_pool is NULL (not initialized)\n");
+    void *pool_start = &g_pool->data[0][0];
+    void *pool_end   = &g_pool->data[POOL_COUNT - 1][SAMPLE_SIZE - 1];
+    if ((void*)data < pool_start || (void*)data > pool_end) {
+        fprintf(stderr, "❌ [ENQ] pointer %p out of bounds [%p ~ %p]\n", data, pool_start, pool_end);
         return false;
     }
 
-    void *pool_start = &shm_pool[0][0];
-    void *pool_end = &shm_pool[POOL_COUNT - 1][SAMPLE_SIZE - 1];
-    // fprintf(stderr, "[ENQ] pointer %p out of shm_pool bounds [%p ~ %p]\n", data, pool_start, pool_end);
-    if ((void *)data < pool_start || (void *)data > pool_end) {
-        fprintf(stderr, "❌ [ENQ] pointer %p out of shm_pool bounds [%p ~ %p]\n", data, pool_start, pool_end);
-        return false;
+    // 1) 예약
+    uint32_t my = atomic_fetch_add_explicit(&rb->prod_resv, 1, memory_order_acq_rel);
+    // fprintf(stderr, "[ENQ] reserved slot=%u (prod_resv now=%u)\n", my, my + 1);
+
+    // 2) 용량 확인
+    for (int spin = 0; (int32_t)(my - atomic_load_explicit(&rb->cons_seq, memory_order_acquire)) >= (int32_t)BUF_COUNT; ++spin) {
+        if (spin == 0) {
+            fprintf(stderr, "⚠️ [ENQ] waiting for free slot (my=%u, cons_seq=%u, BUF_COUNT=%u)\n",
+                my, atomic_load_explicit(&rb->cons_seq, memory_order_acquire), BUF_COUNT);
+        }
+        if (spin > 100000) {
+            fprintf(stderr, "❌ [ENQ] BUFFER FULL (my=%u, cons_seq=%u)\n",
+                my, atomic_load_explicit(&rb->cons_seq, memory_order_acquire));
+            return false;
+        }
     }
 
+    // 3) 슬롯 쓰기
+    uint32_t idx = my & (BUF_COUNT - 1);
+    rb->offset[idx] = ptr_to_offset(data);
+    // fprintf(stderr, "[ENQ] wrote slot[%u] = offset %u (ptr=%p)\n",
+        // idx, rb->offset[idx], data);
 
-    while (true) {
-        tail = atomic_load_explicit(&rb->prod_seq, memory_order_acquire);
-        head = atomic_load_explicit(&rb->cons_seq, memory_order_acquire);
-        if ((tail + 1) % BUF_COUNT == head)
-            return false; // full
+    atomic_thread_fence(memory_order_release);
 
-        // fprintf(stderr, "✅ [ENQ] enqueueing pointer: %p (length: %d)\n", data, length);
-        // rb->data[tail % BUF_COUNT] = data;
-        uint32_t offset = ptr_to_offset(data);
-        // fprintf(stderr, "✅ [ENQ] enqueueing pointer: %p (offset: %u, length: %d)\n", data, offset, length);
-        rb->offset[tail % BUF_COUNT] = offset;
+    // 4) 게시
+    uint32_t expect = my;
+    for (;;) {
+        uint32_t pub = atomic_load_explicit(&rb->prod_pub, memory_order_acquire);
+        // fprintf(stderr, "[ENQ] publish loop: expect=%u, pub=%u\n", expect, pub);
 
-        atomic_thread_fence(memory_order_release);
-        atomic_store_explicit(&rb->prod_seq, tail + 1, memory_order_release);
-        return true;
+        if (pub == expect) {
+            uint32_t desired = (pub + 1);
+            uint32_t exp = pub;
+            if (atomic_compare_exchange_weak_explicit(
+                    &rb->prod_pub, &exp, desired,
+                    memory_order_release, memory_order_relaxed)) {
+                // fprintf(stderr, "✅ [ENQ] published slot=%u → new prod_pub=%u\n", expect, desired);
+                // expect = desired;
+                break;
+            } else {
+                fprintf(stderr, "⚠️ [ENQ] CAS fail during publish (exp=%u, desired=%u)\n", exp, desired);
+            }
+        } else if ((int32_t)(expect - pub) > 0) {
+            fprintf(stderr, "⏳ [ENQ] waiting for prev publish (expect=%u, pub=%u)\n", expect, pub);
+            cpu_relax();
+            continue;
+        } else {
+            fprintf(stderr, "ℹ️ [ENQ] publish already advanced past my slot (expect=%u, pub=%u)\n", expect, pub);
+            break;
+        }
     }
+
+    atomic_fetch_add_explicit(&enq_success_count, 1, memory_order_relaxed);
+    // fprintf(stderr, "🎯 [ENQ] success_count=%" PRIu64 "\n", atomic_load(&enq_success_count));
+    return true;
 }
 
+
+
 bool buffer_try_dequeue(LockFreeRingBuffer *rb, const char **out_ptr, int *out_length) {
-    uint64_t head, tail;
+    if (!g_pool) return false;
 
-    if (!shm_pool) {
-        fprintf(stderr, "❌ [DEQ] shm_pool is NULL (not initialized)\n");
-        return false;
-    }
+    void *pool_start = &g_pool->data[0][0];
+    void *pool_end   = &g_pool->data[POOL_COUNT - 1][SAMPLE_SIZE - 1];
 
-    void *pool_start = &shm_pool[0][0];
-    void *pool_end = &shm_pool[POOL_COUNT - 1][SAMPLE_SIZE - 1];
+    for (;;) {
+        uint32_t head = atomic_load_explicit(&rb->cons_seq, memory_order_acquire);
+        uint32_t tail = atomic_load_explicit(&rb->prod_pub, memory_order_acquire);
 
-    // offset → ptr 변환 함수
-    uint32_t offset;
-    const char *p;
+        if (head == tail) return false; // empty
 
-    while (true) {
-        head = atomic_load_explicit(&rb->cons_seq, memory_order_acquire);
-        tail = atomic_load_explicit(&rb->prod_seq, memory_order_acquire);
-        if (head == tail)
-            return false; // empty
-
-        offset = rb->offset[head % BUF_COUNT];
-        p = (const char *)pool_start + offset;
-
-        if (!p) {
-            fprintf(stderr, "❌ [DEQ] null pointer reconstructed from offset %u\n", offset);
-            return false;
+        uint32_t new_head = head + 1;
+        uint32_t exp = head;
+        if (!atomic_compare_exchange_weak_explicit(
+                &rb->cons_seq, &exp, new_head,
+                memory_order_acquire, memory_order_relaxed)) {
+            continue; // 경쟁 → 재시도
         }
 
-        if ((void *)p < pool_start || (void *)p > pool_end) {
-            fprintf(stderr, "❌ [DEQ] pointer %p out of shm_pool bounds [%p ~ %p]\n", p, pool_start, pool_end);
+        uint32_t offset = rb->offset[head & (BUF_COUNT - 1)];
+        const char *p = (const char *)pool_start + offset;
+
+        // 범위 체크(잘못된 값이면 해제하지 말 것)
+        if ((void*)p < pool_start || (void*)p > pool_end) {
+            fprintf(stderr, "❌ [DEQ] pointer %p out of bounds [%p ~ %p]\n", p, pool_start, pool_end);
             return false;
         }
-
-        // fprintf(stderr, "✅ [DEQ] Dequeue ptr = %p (offset = %u)\n", p, offset);
-        // fprintf(stderr, "    first 4 bytes = %02X %02X %02X %02X\n",
-                // p[0], p[1], p[2], p[3]);
 
         int msg_len = read_be32((const unsigned char *)p);
-
         if (msg_len <= 0 || msg_len > SAMPLE_SIZE - 4) {
             fprintf(stderr, "❌ [DEQ] invalid message length: %d\n", msg_len);
             return false;
         }
 
-        *out_ptr = p + 4;
+        *out_ptr   = p + 4;
         *out_length = msg_len;
-
-        atomic_thread_fence(memory_order_release);
-        atomic_store_explicit(&rb->cons_seq, head + 1, memory_order_release);
+        atomic_fetch_add_explicit(&deq_success_count, 1, memory_order_relaxed);
         return true;
     }
 }
-

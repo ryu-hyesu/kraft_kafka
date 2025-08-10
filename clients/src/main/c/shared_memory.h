@@ -5,14 +5,25 @@
 #include <semaphore.h>
 #include <stdatomic.h>
 #include <stdint.h>
+#include <stdalign.h>
 
-#define BUF_COUNT 128
-#define BUF_SIZE 4096
+#define BUF_COUNT 1024
+#define BUF_SIZE 32768
+
+extern _Atomic uint64_t enq_success_count;
+extern _Atomic uint64_t deq_success_count;
 
 typedef struct {
-    _Atomic uint64_t prod_seq;
-    _Atomic uint64_t cons_seq;
-    uint32_t offset[BUF_COUNT];   // ✅ 메시지를 가리키는 포인터
+    alignas(64) _Atomic uint32_t prod_resv; //  
+    char _pad0[64 - sizeof(_Atomic uint32_t)];
+
+    alignas(64) _Atomic uint32_t prod_pub;
+    char _pad1[64 - sizeof(_Atomic uint32_t)];
+
+    alignas(64) _Atomic uint32_t cons_seq;
+    char _pad2[64 - sizeof(_Atomic uint32_t)];
+    
+    alignas(64) uint32_t offset[BUF_COUNT];   // ✅ 메시지를 가리키는 포인터
 } LockFreeRingBuffer;
 
 typedef struct {

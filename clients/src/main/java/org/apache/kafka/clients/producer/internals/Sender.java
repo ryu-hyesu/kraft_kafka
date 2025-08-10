@@ -907,6 +907,8 @@ public class Sender implements Runnable {
         RequestHeader header = clientRequest.makeHeader(request.version());
         Send send = request.toSend(header);
 
+        // System.out.println(request);
+
         if (send instanceof ByteBufferSend) {
             ByteBufferSend bufferData = (ByteBufferSend) send;
             // 전체 데이터를 저장할 하나의 directBuffer 준비
@@ -920,8 +922,15 @@ public class Sender implements Runnable {
             if (directBuffer == null) {
                 throw new IllegalStateException("❌ No available shared memory slot (shm_pool exhausted)");
             }
-            // ByteBuffer.allocateDirect(totalCapacity);
+
+            if (directBuffer.capacity() < totalCapacity) {
+                throw new IllegalStateException(String.format(
+                    "❌ Shared memory slot too small: need %d bytes but got %d bytes",
+                    totalCapacity, directBuffer.capacity()
+                ));
+            }
             
+            // ByteBuffer.allocateDirect(totalCapacity);
             // 각 buffer의 데이터를 directBuffer에 합침
             for (ByteBuffer buffer : bufferData.getBuffers()) {
                 directBuffer.put(buffer.duplicate());  // regardless of direct or not
