@@ -7,17 +7,29 @@
 #include <stdalign.h>
 #include "shared_memory.h"
 
-#define POOL_COUNT 1024
+#define POOL_COUNT 4096
 #define SAMPLE_SIZE BUF_SIZE
 
-// header
-// extern unsigned char (*shm_pool)[SAMPLE_SIZE];
+#define SHM_MAGIC 0x53485031u
+#define SHM_VER 1u
 
 typedef struct {
-    _Atomic uint32_t head;
-    _Atomic uint32_t tail;
+    uint32_t magic;
+    uint16_t ver;
+    uint16_t flags;
+    uint32_t pool_count;
+    uint32_t sample_size;
+    uint64_t region_size;
+
+    _Atomic uint32_t init_state;
+    _Atomic uint32_t init_epoch;
+
+    alignas(64) _Atomic uint64_t head;
+    char pad1[64 - sizeof(_Atomic uint64_t)];
+    alignas(64) _Atomic uint64_t tail;
+    char pad2[64 - sizeof(_Atomic uint64_t)];
+
     alignas(64) uint32_t slots[POOL_COUNT];
-    _Atomic uint32_t init_magic;
 } shm_pool_meta_t;
 
 typedef struct{
