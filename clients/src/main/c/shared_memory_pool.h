@@ -24,7 +24,9 @@ typedef struct {
     _Atomic uint32_t init_state;
     _Atomic uint32_t init_epoch;
 
-    alignas(64) _Atomic uint64_t head;
+    alignas(64) _Atomic uint64_t head_resv;
+    char pad0[64 - sizeof(_Atomic uint64_t)];
+    alignas(64) _Atomic uint64_t head_pub;
     char pad1[64 - sizeof(_Atomic uint64_t)];
     alignas(64) _Atomic uint64_t tail;
     char pad2[64 - sizeof(_Atomic uint64_t)];
@@ -40,16 +42,6 @@ typedef struct{
 extern shm_pool_region_t *g_pool;
 
 // lock-free freelist ringbuffer 구조체
-typedef struct {
-    alignas(64) _Atomic uint32_t head;
-    char _pad1[64 - sizeof(_Atomic uint32_t)];
-
-    alignas(64) _Atomic uint32_t tail;
-    char _pad2[64 - sizeof(_Atomic uint32_t)];
-
-    alignas(64) uint32_t slots[POOL_COUNT];
-} shm_memory_pool;
-
 
 int init_shared_memory_pool();  
 unsigned char* shm_pool_get();         // 메모리 할당 (freelist pop)

@@ -11,6 +11,7 @@
 #include <inttypes.h>
 #include <pthread.h>   // pthread_self
 #include <stdatomic.h>
+#include <stdbool.h>
 
 // 0 = uninit, 1 = initing, 2 = ready, -1 = failed
 // static _Atomic int g_pool_inited = 0; // local variable
@@ -115,7 +116,8 @@ int init_shared_memory_pool(void) {
         for (uint32_t i = 0; i < POOL_COUNT; ++i) meta->slots[i] = i;
 
         atomic_store_explicit(&meta->tail, 0,                       memory_order_relaxed);
-        atomic_store_explicit(&meta->head, (uint64_t)POOL_COUNT,    memory_order_relaxed);
+        atomic_store_explicit(&meta->head_resv, (uint64_t)POOL_COUNT,    memory_order_relaxed);
+        atomic_store_explicit(&meta->head_pub, (uint64_t)POOL_COUNT,    memory_order_relaxed);
         atomic_fetch_add_explicit(&meta->init_epoch, 1,             memory_order_relaxed);
 
         // 공유 게이트 공개 (반드시 마지막, release)
@@ -155,10 +157,10 @@ unsigned char* shm_pool_get() {
 
     int attempt = 0;
     for (;;) {
-        uint64_t tail = atomic_load_explicit(&g_pool->meta.tail, memory_order_acquire);
-        uint64_t head = atomic_load_explicit(&g_pool->meta.head, memory_order_acquire);
+        uint64_t tail = atomic_load_explicit(&g_pool->meta.tail, memory_order_relaxed);
+        uint64_t pub = atomic_load_explicit(&g_pool->meta.head_pub, memory_order_acquire);
 
-        if (head == tail) {
+        if (pub == tail) {
             // 빈 상태
             return NULL;
         }
@@ -170,7 +172,7 @@ unsigned char* shm_pool_get() {
                 memory_order_relaxed)) {
             uint32_t idx = g_pool->meta.slots[(uint32_t)tail & (POOL_COUNT - 1)];
             if (__builtin_expect(idx >= POOL_COUNT, 0)) {
-                fprintf(stderr, "❌FATAL: idx OOB idx=%u tail=%" PRIu64 " head=%" PRIu64 "\n", idx, tail, head);
+                fprintf(stderr, "❌FATAL: idx OOB idx=%u tail=%" PRIu64 " head=%" PRIu64 "\n", idx, tail, pub);
                 abort();
             }
             unsigned char* p = &g_pool->data[idx][0];
@@ -226,26 +228,36 @@ void shm_pool_release(unsigned char* ptr) {
     if (up < base || up >= end) { fprintf(stderr,"[REL][FAIL OOR]\n"); return; }
     size_t off = (size_t)(up - base);
     if (off % SAMPLE_SIZE)       { fprintf(stderr,"[REL][FAIL MISALN]\n"); return; }
+    
     uint32_t idx = (uint32_t)(off / SAMPLE_SIZE);
 
-    for (;;) {
-        uint64_t head = atomic_load_explicit(&g_pool->meta.head, memory_order_relaxed);
+    uint64_t my = atomic_fetch_add_explicit(&g_pool->meta.head_resv, 1, memory_order_acq_rel);
 
-        // 1) 먼저 슬롯에 데이터 기록
-        g_pool->meta.slots[(uint32_t)head & (POOL_COUNT - 1)] = idx;
+    g_pool->meta.slots[(uint32_t)my & (POOL_COUNT - 1)] = idx;
 
-        // 2) 공개(head++) — release로 publish
-        uint64_t new_head = head + 1;
-        if (atomic_compare_exchange_strong_explicit(
-                &g_pool->meta.head, &head, new_head,
-                memory_order_release, memory_order_relaxed)) {
-            return;
-        }
-
-        // ❗ CAS 경합 시 동일 슬롯에 다중 쓰기 위험 존재.
-        // 실전에선 head_resv(atomic_fetch_add)로 예약 후, per-slot seq로 공개 권장.
+    while (atomic_load_explicit(&g_pool->meta.head_pub, memory_order_acquire) != my) {
         cpu_relax();
     }
+    
+    atomic_store_explicit(&g_pool->meta.head_pub, my + 1, memory_order_release);
+
+    // for (;;) {
+    //     uint64_t head = 
+    //     // 1) 먼저 슬롯에 데이터 기록
+    //     g_pool->meta.slots[(uint32_t)head & (POOL_COUNT - 1)] = idx;
+
+    //     // 2) 공개(head++) — release로 publish
+    //     uint64_t new_head = head + 1;
+    //     if (atomic_compare_exchange_strong_explicit(
+    //             &g_pool->meta.head, &head, new_head,
+    //             memory_order_release, memory_order_relaxed)) {
+    //         return;
+    //     }
+
+    //     // ❗ CAS 경합 시 동일 슬롯에 다중 쓰기 위험 존재.
+    //     // 실전에선 head_resv(atomic_fetch_add)로 예약 후, per-slot seq로 공개 권장.
+    //     cpu_relax();
+    // }
 }
 
 
