@@ -13,14 +13,8 @@
 #include <stdatomic.h>
 #include <stdbool.h>
 
-// 0 = uninit, 1 = initing, 2 = ready, -1 = failed
-// static _Atomic int g_pool_inited = 0; // local variable
-
 #define SHM_NAME "/shm_pool_region"
-// #define INIT_MAGIC 0xC0FFEE01u
 
-// unsigned char (*shm_pool)[SAMPLE_SIZE];  // 포인터 to array-of-SAMPLE_SIZE
-// static shm_memory_pool freelist;
 _Atomic uint64_t pool_get_cnt = 0, pool_rel_cnt = 0;
 
 shm_pool_region_t *g_pool = NULL;
@@ -31,23 +25,22 @@ static inline size_t expected_region_size(void){
 
 _Static_assert(POOL_COUNT != 0 && ((POOL_COUNT & (POOL_COUNT - 1)) == 0),
                "POOL_COUNT must be nonzero power of two");
-static inline uint32_t ring_next(uint32_t x) {
-    // 안전하게 맞추려면 % 사용; 성능 튜닝은 나중에 2^n로 바꿔 마스크
-    return (x + 1) % (2u * POOL_COUNT);
-}
+
+_Static_assert(BUF_COUNT && ((BUF_COUNT & (BUF_COUNT-1)) == 0),
+"BUF_COUNT must be power of 2");
 
 // 0 = uninit, 1 = initing, 2 = ready, -1 = failed
 static _Atomic int g_pool_inited = 0; // process-local fast path
 
 int init_shared_memory_pool(void) {
     // 로컬 상태 빠른 분기
-    int s = atomic_load_explicit(&g_pool_inited, memory_order_acquire);
+    int s = atomic_load_explicit(&g_pool_inited, memory_order_relaxed);
     if (s == 2) return 0;
     if (s == -1) return -1;
     if (s == 1) {
         // 다른 스레드가 mmap 중. 유한 대기 권장(여긴 간단히 busy-wait)
-        while (atomic_load_explicit(&g_pool_inited, memory_order_acquire) == 1) cpu_relax();
-        return atomic_load_explicit(&g_pool_inited, memory_order_acquire) == 2 ? 0 : -1;
+        while (atomic_load_explicit(&g_pool_inited, memory_order_relaxed) == 1) cpu_relax();
+        return atomic_load_explicit(&g_pool_inited, memory_order_relaxed) == 2 ? 0 : -1;
     }
 
     // 내가 초기화자에 도전
@@ -56,8 +49,8 @@ int init_shared_memory_pool(void) {
             &g_pool_inited, &expected, 1,
             memory_order_acq_rel, memory_order_acquire)) {
         // 이미 누가 1 또는 2로 바꿈 → 결과를 기다림
-        while (atomic_load_explicit(&g_pool_inited, memory_order_acquire) == 1) cpu_relax();
-        return atomic_load_explicit(&g_pool_inited, memory_order_acquire) == 2 ? 0 : -1;
+        while (atomic_load_explicit(&g_pool_inited, memory_order_relaxed) == 1) cpu_relax();
+        return atomic_load_explicit(&g_pool_inited, memory_order_relaxed) == 2 ? 0 : -1;
     }
 
     // ---- 여기서부터 실제 shm open/map/검증/초기화 ----
@@ -113,7 +106,10 @@ int init_shared_memory_pool(void) {
         meta->sample_size = SAMPLE_SIZE;
         meta->region_size = sz;
 
-        for (uint32_t i = 0; i < POOL_COUNT; ++i) meta->slots[i] = i;
+        for (uint32_t i = 0; i < POOL_COUNT; ++i) {
+            meta->slots[i] = i;
+            atomic_store_explicit(&meta->pub_seq[i], 0, memory_order_relaxed);
+        }
 
         atomic_store_explicit(&meta->tail, 0,                       memory_order_relaxed);
         atomic_store_explicit(&meta->head_resv, (uint64_t)POOL_COUNT,    memory_order_relaxed);
@@ -146,7 +142,7 @@ fail:
 // 메모리 가져옴 (freelist pop)
 unsigned char* shm_pool_get() {
     // 로컬 fast path 체크
-    if (atomic_load_explicit(&g_pool_inited, memory_order_acquire) != 2) {
+    if (atomic_load_explicit(&g_pool_inited, memory_order_relaxed) != 2) {
         if (init_shared_memory_pool() != 0) return NULL;
     }
     // 권위 게이트(공유) 확인
@@ -182,7 +178,6 @@ unsigned char* shm_pool_get() {
     }
 }
 
-
 static _Atomic uint64_t g_rel_ok = 0, g_rel_fail = 0;
 
 static inline int ptr_to_index(const unsigned char *p, uint32_t *out_idx) {
@@ -208,12 +203,43 @@ static inline int ptr_to_index(const unsigned char *p, uint32_t *out_idx) {
     }
     *out_idx = (uint32_t)(off / SAMPLE_SIZE);
     atomic_fetch_add_explicit(&g_rel_ok, 1, memory_order_relaxed);
-    // fprintf(stderr,"[REL][OK] idx=%u ptr=%p\n", *out_idx, (void*)up);
     fflush(stderr);
     return 0;
 }
 
+static inline void try_advance_head_pub(volatile shm_pool_meta_t *m)
+{
+    const uint32_t mask = POOL_COUNT - 1;
 
+    for (;;) {
+        // 1) 현재 프런티어를 읽음 (relaxed로 충분)
+        uint64_t cur  = atomic_load_explicit(&m->head_pub, memory_order_relaxed);
+        uint64_t next = cur;
+
+        // 2) 연속 구간 탐색
+        //    pub_seq[next & mask] 가 (next+1) 이면 해당 티켓이 준비됨 → 한 칸 전진
+        for (;;) {
+            uint64_t tag = atomic_load_explicit(&m->pub_seq[next & mask],
+                                                memory_order_acquire);
+            if (tag != next + 1) break;   // 연속이 끊기면 중단
+            ++next;
+        }
+
+        if (next == cur) {
+            // 더 당길 게 없으면 종료
+            return;
+        }
+
+        // 3) head_pub을 next로 한번에 전진 (성공 시 release)
+        //    실패하면 다른 스레드가 이미 갱신한 것 → 처음부터 재시도
+        if (atomic_compare_exchange_weak_explicit(&m->head_pub, &cur, next,
+                                                  memory_order_release,
+                                                  memory_order_relaxed)) {
+            return;
+        }
+        // CAS 실패: cur 값이 갱신되었으니 루프 재시작
+    }
+}
 
 // 메모리 반납 (freelist push)
 // ⚠️ 현재 구현은 다중 프로듀서에서 slot 쓰기 경쟁이 생길 수 있음.
@@ -231,33 +257,31 @@ void shm_pool_release(unsigned char* ptr) {
     
     uint32_t idx = (uint32_t)(off / SAMPLE_SIZE);
 
-    uint64_t my = atomic_fetch_add_explicit(&g_pool->meta.head_resv, 1, memory_order_acq_rel);
+    // 1) 예약 (원자성 보장해서 가져와 CAS연산이 필요 없음)
+    uint64_t my = atomic_fetch_add_explicit(&g_pool->meta.head_resv, 1, memory_order_relaxed);
+    uint32_t pos = (uint32_t)(my & (POOL_COUNT - 1)); // 인덱스 계산
 
-    g_pool->meta.slots[(uint32_t)my & (POOL_COUNT - 1)] = idx;
-
-    while (atomic_load_explicit(&g_pool->meta.head_pub, memory_order_acquire) != my) {
-        cpu_relax();
+    // 2) 용량 확인
+    int spin = 0;
+    while ((int64_t)(my - atomic_load_explicit(&g_pool->meta.head_pub, memory_order_acquire))
+            >= (int64_t)POOL_COUNT) {
+        backoff_spin(++spin);
     }
+
+    // 3) 슬롯 작성
+    g_pool->meta.slots[pos] = idx;
+
+    // 4) 슬롯 게시 표시
+    atomic_store_explicit(&g_pool->meta.pub_seq[pos], my + 1, memory_order_release);
     
-    atomic_store_explicit(&g_pool->meta.head_pub, my + 1, memory_order_release);
-
-    // for (;;) {
-    //     uint64_t head = 
-    //     // 1) 먼저 슬롯에 데이터 기록
-    //     g_pool->meta.slots[(uint32_t)head & (POOL_COUNT - 1)] = idx;
-
-    //     // 2) 공개(head++) — release로 publish
-    //     uint64_t new_head = head + 1;
-    //     if (atomic_compare_exchange_strong_explicit(
-    //             &g_pool->meta.head, &head, new_head,
-    //             memory_order_release, memory_order_relaxed)) {
-    //         return;
-    //     }
-
-    //     // ❗ CAS 경합 시 동일 슬롯에 다중 쓰기 위험 존재.
-    //     // 실전에선 head_resv(atomic_fetch_add)로 예약 후, per-slot seq로 공개 권장.
-    //     cpu_relax();
+    // 3) head_pub 가져옴 (여기서 head_pub에 접근하기 위해 경합 발생함)
+    // int spin = 0;
+    // while (atomic_load_explicit(&g_pool->meta.head_pub, memory_order_relaxed) != my) {
+    //     backoff_spin(++spin);
     // }
+    
+    try_advance_head_pub(&g_pool->meta); 
 }
+
 
 

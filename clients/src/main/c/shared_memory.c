@@ -88,10 +88,7 @@ uint32_t ptr_to_offset(const char* ptr) {
 
 
 bool buffer_try_enqueue(LockFreeRingBuffer *rb, const char *data, int length) {
-    if (!data || length < 4 || length > SAMPLE_SIZE || !g_pool->data) {
-        fprintf(stderr, "❌ [ENQ] invalid input (data=%p, len=%d, shm_pool=%p)\n", data, length, g_pool->data);
-        return false;
-    }
+    if (!data || length < 4 || length > SAMPLE_SIZE || !g_pool->data) return false;
 
     // 1) 범위 검사 (exclusive end)
     const unsigned char *pool_begin = &g_pool->data[0][0];
@@ -122,60 +119,34 @@ bool buffer_try_enqueue(LockFreeRingBuffer *rb, const char *data, int length) {
     }
 
     // 1) 예약
-    uint32_t my = atomic_fetch_add_explicit(&rb->prod_resv, 1, memory_order_acq_rel);
+    uint32_t my = atomic_fetch_add_explicit(&rb->prod_resv, 1, memory_order_relaxed);
     // fprintf(stderr, "[ENQ] reserved slot=%u (prod_resv now=%u)\n", my, my + 1);
 
     // 2) 용량 확인
     for (int spin = 0;
-        (int32_t)(my - atomic_load_explicit(&rb->cons_seq, memory_order_acquire)) >= (int32_t)BUF_COUNT;
+        (int32_t)(my - atomic_load_explicit(&rb->cons_seq, memory_order_relaxed)) >= (int32_t)BUF_COUNT;
         ++spin) {
-        backoff_spin(spin);                 // ← 추가
+        backoff_spin(spin);
     }
 
     // 3) 슬롯 쓰기
     uint32_t idx = my & (BUF_COUNT - 1);
     rb->offset[idx] = ptr_to_offset(data);
-    // fprintf(stderr, "[ENQ] wrote slot[%u] = offset %u (ptr=%p)\n",
-        // idx, rb->offset[idx], data);
-
-    // atomic_thread_fence(memory_order_release);
 
     // 4) 게시
-    uint32_t expect = my;
-    while (atomic_load_explicit(&rb->prod_pub, memory_order_acquire) != my) {
-        cpu_relax();
+    for (;;) {
+        uint32_t pub = atomic_load_explicit(&rb->prod_pub, memory_order_relaxed);
+        if ((int32_t)(my - pub) == 0) {
+            if (atomic_compare_exchange_weak_explicit(
+                &rb->prod_pub, &pub, my+1,
+                memory_order_release, memory_order_relaxed)) break;
+        } else {
+            cpu_relax();
+        }
     }
 
-    atomic_store_explicit(&rb->prod_pub, my + 1, memory_order_release);
-        
-    // if (pub == expect) {
-        //     uint32_t desired = (pub + 1);
-        //     uint32_t exp = pub;
-        //     if (atomic_compare_exchange_weak_explicit(
-        //             &rb->prod_pub, &exp, desired,
-        //             memory_order_release, memory_order_relaxed)) {
-        //         // fprintf(stderr, "✅ [ENQ] published slot=%u → new prod_pub=%u\n", expect, desired);
-        //         // expect = desired;
-        //         break;
-        //     } else {
-        //         fprintf(stderr, "⚠️ [ENQ] CAS fail during publish (exp=%u, desired=%u)\n", exp, desired);
-        //     }
-        // } else if ((int32_t)(expect - pub) > 0) {
-        //     fprintf(stderr, "⏳ [ENQ] waiting for prev publish (expect=%u, pub=%u)\n", expect, pub);
-        //     cpu_relax();
-        //     continue;
-        // } else {
-        //     fprintf(stderr, "ℹ️ [ENQ] publish already advanced past my slot (expect=%u, pub=%u)\n", expect, pub);
-        //     break;
-        // }
-    // }
-
-    // atomic_fetch_add_explicit(&enq_success_count, 1, memory_order_relaxed);
-    // fprintf(stderr, "🎯 [ENQ] success_count=%" PRIu64 "\n", atomic_load(&enq_success_count));
     return true;
 }
-
-
 
 bool buffer_try_dequeue(LockFreeRingBuffer *rb, const char **out_ptr, int *out_length) {
     if (!g_pool) return false;
@@ -184,7 +155,7 @@ bool buffer_try_dequeue(LockFreeRingBuffer *rb, const char **out_ptr, int *out_l
     void *pool_end   = &g_pool->data[POOL_COUNT - 1][SAMPLE_SIZE - 1];
 
     for (;;) {
-        uint32_t head = atomic_load_explicit(&rb->cons_seq, memory_order_acquire);
+        uint32_t head = atomic_load_explicit(&rb->cons_seq, memory_order_relaxed);
         uint32_t tail = atomic_load_explicit(&rb->prod_pub, memory_order_acquire);
 
         if (head == tail) return false; // empty

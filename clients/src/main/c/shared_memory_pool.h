@@ -32,6 +32,7 @@ typedef struct {
     char pad2[64 - sizeof(_Atomic uint64_t)];
 
     alignas(64) uint32_t slots[POOL_COUNT];
+    alignas(64) _Atomic uint64_t pub_seq[POOL_COUNT];
 } shm_pool_meta_t;
 
 typedef struct{
