@@ -241,6 +241,7 @@ static inline void try_advance_head_pub(volatile shm_pool_meta_t *m)
     }
 }
 
+alignas(64) static _Atomic int advance_lock = 0;
 // 메모리 반납 (freelist push)
 // ⚠️ 현재 구현은 다중 프로듀서에서 slot 쓰기 경쟁이 생길 수 있음.
 // 근본 해결은 head_resv/pub 이중 포인터 또는 per-slot seq(권장).
@@ -280,7 +281,16 @@ void shm_pool_release(unsigned char* ptr) {
     //     backoff_spin(++spin);
     // }
     
-    try_advance_head_pub(&g_pool->meta); 
+    // 한 놈만 민다!!
+    uint64_t hp = atomic_load_explicit(&g_pool->meta.head_pub, memory_order_relaxed);
+    if (my == hp) {
+        // 대표 한 놈만 '연속 구간'을 스캔해서 head_pub를 당긴다
+        if (atomic_exchange_explicit(&advance_lock, 1, memory_order_acq_rel) == 0) {
+            try_advance_head_pub(&g_pool->meta);   // 연속으로 준비된 구간 끝까지 한 번에 밀기
+            atomic_store_explicit(&advance_lock, 0, memory_order_release);
+        }
+    }
+    // try_advance_head_pub(); 
 }
 
 
