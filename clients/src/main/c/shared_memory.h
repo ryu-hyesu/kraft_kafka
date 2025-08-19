@@ -45,6 +45,7 @@ static inline void cpu_relax(void) {
 
 
 static inline void backoff_spin(int spin) {
+    // fprintf(stderr,"[back off] %d\n", spin);
     if (spin < 512) { cpu_relax(); return; }
     if (spin < 4096) { sched_yield(); return; }
     struct timespec ts = { .tv_sec = 0, .tv_nsec = 200000 }; // 0.2ms

@@ -185,3 +185,11 @@ Java_org_apache_kafka_clients_producer_SharedMemoryProducer_readSharedMemoryByBu
 
     return buf;
 }
+
+JNIEXPORT void JNICALL
+Java_org_apache_kafka_clients_producer_SharedMemoryProducer_closeSharedMemory(
+    JNIEnv *env, jobject obj)
+{
+    cleanup_shared_memory(&handle, "/prod_broker_shm", "/prod_broker_sem");
+    return;
+}

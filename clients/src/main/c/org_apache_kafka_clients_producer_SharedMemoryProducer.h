@@ -31,6 +31,14 @@ JNIEXPORT void JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryProduc
 JNIEXPORT jobject JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryProducer_readSharedMemoryByBuffer
   (JNIEnv *, jclass);
 
+/*
+ * Class:     org_apache_kafka_clients_producer_SharedMemoryProducer
+ * Method:    closeSharedMemory
+ * Signature: ()V
+ */
+JNIEXPORT void JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryProducer_closeSharedMemory
+  (JNIEnv *, jclass);
+
 #ifdef __cplusplus
 }
 #endif

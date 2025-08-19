@@ -68,6 +68,7 @@ import static org.apache.kafka.clients.consumer.internals.ConsumerUtils.createLo
 import static org.apache.kafka.clients.consumer.internals.ConsumerUtils.createMetrics;
 import static org.apache.kafka.clients.consumer.internals.ConsumerUtils.createSubscriptionState;
 import org.apache.kafka.clients.consumer.internals.metrics.KafkaConsumerMetrics;
+import org.apache.kafka.clients.producer.SharedMemoryProducer;
 import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.IsolationLevel;
 import org.apache.kafka.common.KafkaException;
@@ -1105,6 +1106,7 @@ public class ClassicKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
 
     @Override
     public void close(Duration timeout) {
+        SharedMemoryProducer.closeSharedMemory();
         if (timeout.toMillis() < 0)
             throw new IllegalArgumentException("The timeout cannot be negative.");
         acquire();
