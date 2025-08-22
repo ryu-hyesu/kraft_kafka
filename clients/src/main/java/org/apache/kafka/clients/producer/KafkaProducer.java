@@ -16,6 +16,20 @@
  */
 package org.apache.kafka.clients.producer;
 
+import java.net.InetSocketAddress;
+import java.time.Duration;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Properties;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+
 import org.apache.kafka.clients.ApiVersions;
 import org.apache.kafka.clients.ClientUtils;
 import org.apache.kafka.clients.CommonClientConfigs;
@@ -80,22 +94,7 @@ import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Timer;
 import org.apache.kafka.common.utils.Utils;
-
 import org.slf4j.Logger;
-
-import java.net.InetSocketAddress;
-import java.time.Duration;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.Properties;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 
 
 /**
@@ -1365,6 +1364,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
     }
 
     private void close(Duration timeout, boolean swallowException) {
+        // SharedMemoryProducer.closeSharedMemory();
         long timeoutMs = timeout.toMillis();
         if (timeoutMs < 0)
             throw new IllegalArgumentException("The timeout cannot be negative.");

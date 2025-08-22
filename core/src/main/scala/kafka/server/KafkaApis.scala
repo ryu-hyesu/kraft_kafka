@@ -68,6 +68,7 @@ import org.apache.kafka.server.share.acknowledge.ShareAcknowledgementBatch
 import org.apache.kafka.server.storage.log.{FetchIsolation, FetchParams, FetchPartitionData}
 import org.apache.kafka.storage.internals.log.AppendOrigin
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
+import org.apache.kafka.clients.producer.SharedMemoryProducer
 
 import java.time.Duration
 import java.util
@@ -1392,6 +1393,7 @@ class KafkaApis(val requestChannel: RequestChannel,
   }
 
   def handleLeaveGroupRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
+    SharedMemoryProducer.closeSharedMemory();
     val leaveGroupRequest = request.body[LeaveGroupRequest]
 
     if (!authHelper.authorize(request.context, READ, GROUP, leaveGroupRequest.data.groupId)) {

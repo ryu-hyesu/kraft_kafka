@@ -1,3 +1,5 @@
+// #define BACKOFF_PROF
+
 #include "shared_memory.h"
 #include "shared_memory_pool.h"
 #include <jni.h>
@@ -9,7 +11,22 @@
 #include <pthread.h>    // pthread_self
 #include <errno.h>      // errno, EAGAIN
 #include <inttypes.h>   // PRIu64
+
+#include <stdatomic.h>
+#include <stdint.h>
 #include "org_apache_kafka_clients_producer_SharedMemoryProducer.h"
+
+_Atomic uint64_t g_bk_relax_tot = 0, g_bk_yield_tot = 0, g_bk_nanos_tot = 0;
+_Atomic uint64_t g_bk_yield_ns_tot = 0, g_bk_nanos_ns_tot = 0;
+
+_Atomic uint64_t g_enq_total_ns = 0;
+_Atomic uint64_t g_enq_cnt = 0;
+_Atomic uint64_t g_enq_cap_wait_ns = 0;     // 용량 대기(consumer가 못 따라와서 full일 때)
+_Atomic uint64_t g_enq_pub_cas_wait_ns = 0; 
+
+_Atomic uint64_t g_deq_total_ns = 0;
+_Atomic uint64_t g_deq_cnt = 0;
+_Atomic uint64_t g_deq_cas_wait_ns = 0; 
 
 static SharedMemoryHandle handle = {0};
 
@@ -190,6 +207,9 @@ JNIEXPORT void JNICALL
 Java_org_apache_kafka_clients_producer_SharedMemoryProducer_closeSharedMemory(
     JNIEnv *env, jobject obj)
 {
-    cleanup_shared_memory(&handle, "/prod_broker_shm", "/prod_broker_sem");
+    #ifdef BACKOFF_PROF
+        bk_print_times_ext();  // ✅ 숫자 찍기
+    #endif
+    // cleanup_shared_memory(&handle, "/prod_broker_shm", "/prod_broker_sem");
     return;
 }
