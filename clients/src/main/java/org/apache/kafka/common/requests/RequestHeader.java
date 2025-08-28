@@ -16,15 +16,15 @@
  */
 package org.apache.kafka.common.requests;
 
+import java.nio.ByteBuffer;
+import java.util.Objects;
+
 import org.apache.kafka.common.errors.InvalidRequestException;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.message.RequestHeaderData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.ByteBufferAccessor;
 import org.apache.kafka.common.protocol.ObjectSerializationCache;
-
-import java.nio.ByteBuffer;
-import java.util.Objects;
 
 /**
  * The header for a request in the Kafka protocol
@@ -74,8 +74,13 @@ public class RequestHeader implements AbstractRequestResponse {
     }
 
     // Visible for testing.
+    // protected -> public
     void write(ByteBuffer buffer, ObjectSerializationCache serializationCache) {
         data.write(new ByteBufferAccessor(buffer), serializationCache, headerVersion);
+    }
+
+    public void write(ByteBufferAccessor buffer, ObjectSerializationCache serializationCache) {
+        data.write(buffer, serializationCache, headerVersion);
     }
 
     /**
@@ -90,7 +95,8 @@ public class RequestHeader implements AbstractRequestResponse {
      *
      * Visible for testing.
      */
-    int size(ObjectSerializationCache serializationCache) {
+    // [shm] protected => public
+    public int size(ObjectSerializationCache serializationCache) {
         this.size = data.size(serializationCache, headerVersion);
         return size;
     }

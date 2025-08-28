@@ -24,6 +24,11 @@ _Atomic uint64_t g_enq_cnt = 0;
 _Atomic uint64_t g_enq_cap_wait_ns = 0;     // 용량 대기(consumer가 못 따라와서 full일 때)
 _Atomic uint64_t g_enq_pub_cas_wait_ns = 0; 
 
+_Atomic uint64_t g_alloc_total_ns = 0;
+_Atomic uint64_t g_alloc_cnt = 0;
+_Atomic uint64_t g_alloc_cap_wait_ns = 0;     // 용량 대기(consumer가 못 따라와서 full일 때)
+_Atomic uint64_t g_alloc_pub_cas_wait_ns = 0; // prod_pub CAS 전후 대기
+
 _Atomic uint64_t g_deq_total_ns = 0;
 _Atomic uint64_t g_deq_cnt = 0;
 _Atomic uint64_t g_deq_cas_wait_ns = 0; 
@@ -40,15 +45,21 @@ JNIEXPORT jobject JNICALL
 Java_org_apache_kafka_clients_producer_SharedMemoryProducer_allocateSharedMemoryByBuffer
   (JNIEnv *env, jobject obj)
 {
-    // fprintf(stderr, "[JNI][PRODUCER] init_shared_memory_pool\n");
     if (!g_pool) {
         if (init_shared_memory_pool() != 0) return NULL;
     }
 
-    // fprintf(stderr, "[JNI][PRODUCER] shm_pool_get\n");
+#ifdef BACKOFF_PROF
+    uint64_t t0_alloc = bk_now_ns();
+    uint64_t cap_wait_ns = 0, pubcas_wait_ns = 0;  // 여기선 측정 불가 → 0
+#endif
+
     unsigned char* ptr = shm_pool_get();
     if (!ptr) {
         fprintf(stderr, "❌ shm_pool_get() failed: no available slot.\n");
+#ifdef BACKOFF_PROF
+        bk_alloc_add(bk_now_ns() - t0_alloc, cap_wait_ns, pubcas_wait_ns);  // 실패도 기록
+#endif
         return NULL;
     }
 
@@ -59,9 +70,6 @@ Java_org_apache_kafka_clients_producer_SharedMemoryProducer_allocateSharedMemory
 
     // 혹시 기존 예외가 남아 있으면 클리어
     (*env)->ExceptionClear(env);
-
-    // fprintf(stderr, "[JNI][PRODUCER] create a DirectByteBuffer ptr=%p size=%d\n",
-    //         (void*)ptr, SAMPLE_SIZE);
 
     // ★ 문제 지점
     jobject buffer = (*env)->NewDirectByteBuffer(env, (void*)ptr, (jlong)SAMPLE_SIZE);
@@ -78,19 +86,49 @@ Java_org_apache_kafka_clients_producer_SharedMemoryProducer_allocateSharedMemory
         fprintf(stderr, "❌ NewDirectByteBuffer returned NULL (ptr=%p size=%d)\n",
                 (void*)ptr, SAMPLE_SIZE);
         shm_pool_release(ptr);
+#ifdef BACKOFF_PROF
+        bk_alloc_add(bk_now_ns() - t0_alloc, cap_wait_ns, pubcas_wait_ns);  // 실패도 기록
+#endif
         return NULL;
     }
-
-    // fprintf(stderr, "[JNI][PRODUCER] before return a DirectByteBuffer buffer=%p\n",
-    //         (void*)buffer);
+#ifdef BACKOFF_PROF
+    bk_alloc_add(bk_now_ns() - t0_alloc, cap_wait_ns, pubcas_wait_ns);      // 성공 기록
+#endif
     return buffer;
+}
+
+JNIEXPORT jobject JNICALL
+Java_org_apache_kafka_clients_producer_SharedMemoryProducer_getPoolBigBuffer(
+    JNIEnv *env, jobject obj)
+{
+    ENSURE_POOL_OR_RETURN(env, NULL);
+
+    if (!g_pool_base) {
+        g_pool_base  = (void*)&g_pool->data[0][0];
+        g_pool_bytes = (jlong)((jlong)POOL_COUNT * (jlong)SAMPLE_SIZE);
+    }
+
+    if (g_pool_bigbuf_global) {
+        // 이미 GlobalRef가 있으면 로컬 참조로 반환
+        return (*env)->NewLocalRef(env, g_pool_bigbuf_global);
+    }
+
+    jobject big = (*env)->NewDirectByteBuffer(env, g_pool_base, g_pool_bytes);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionDescribe(env);
+        (*env)->ExceptionClear(env);
+        return NULL;
+    }
+    if (!big) return NULL;
+
+    g_pool_bigbuf_global = (*env)->NewGlobalRef(env, big);
+    // 반환은 로컬 ref (big)로 함
+    return big;
 }
 
 
 // 포인터를 받아 ringbuffer에 저장
 JNIEXPORT void JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryProducer_commitSharedMemoryByBuffer(JNIEnv *env, jobject obj, jobject buffer, jint length) {
-    // fprintf(stderr, "[JNI][COMMIT] init_shared_memory_pool buffer=%p\n",
-            // (void*)buffer);
     if (g_pool == NULL) {
         if (init_shared_memory_pool() != 0)
             return;
@@ -103,13 +141,17 @@ JNIEXPORT void JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryProduc
     void *nativeBuffer = (*env)->GetDirectBufferAddress(env, buffer);
     if (!nativeBuffer) return;
 
-    // fprintf(stderr, "[JNI][COMMIT] GetDirectBufferAddress buffer=%p\n",
-    //         (void*)nativeBuffer);
+#ifdef BACKOFF_PROF
+    uint64_t t0_enq = bk_now_ns();
+    uint64_t cap_wait_ns = 0, pubcas_wait_ns = 0;  // 여기선 직접 계측 불가 → 0
+#endif
 
-    // fprintf(stderr, "start to write\n");
     if (buffer_try_enqueue(handle.rb, (const char *)nativeBuffer, length)) {
         atomic_fetch_add(&enq_success_count, 1);
         sem_post(handle.semaphore);
+#ifdef BACKOFF_PROF
+        bk_enq_add(bk_now_ns() - t0_enq, cap_wait_ns, pubcas_wait_ns);       // 성공만 기록
+#endif
     } else {
         fprintf(stderr, "fail to msg\n");
     }
@@ -120,6 +162,11 @@ JNIEXPORT jobject JNICALL
 Java_org_apache_kafka_clients_producer_SharedMemoryProducer_readSharedMemoryByBuffer(
     JNIEnv *env, jobject obj) 
 {
+
+#ifdef BACKOFF_PROF
+    uint64_t t0 = bk_now_ns();
+    uint64_t cas_wait_ns = 0;    // 이 레벨에서는 측정 불가 → 0 유지
+#endif
     pid_t pid = getpid();
     unsigned long tid = (unsigned long)pthread_self();
 
@@ -138,15 +185,12 @@ Java_org_apache_kafka_clients_producer_SharedMemoryProducer_readSharedMemoryByBu
             return NULL;
         }
     }
-
     
     if (sem_trywait(handle.semaphore) == -1) {
         int e = errno;
         if (e != EAGAIN) {
             fprintf(stderr, "[JNI][%d:%lu] ⚠️ sem_trywait error: %s\n", pid, tid, strerror(e));
         } else {
-            // 큐 비어있음
-            // fprintf(stderr, "[JNI][%d:%lu] (empty)\n", pid, tid);
         }
         return NULL;
     }
@@ -158,49 +202,35 @@ Java_org_apache_kafka_clients_producer_SharedMemoryProducer_readSharedMemoryByBu
     if (!buffer_try_dequeue(handle.rb, &ptr, &length)) {
         // 세마포어는 이미 내려갔으므로(sem_trywait 성공) 실패 시 복구할지 정책 결정 필요
         // 생산자/소비자 동기화 정책에 따라 sem_post를 되돌릴지 판단
+        // sem_post(handle.semaphore);
         fprintf(stderr, "[JNI][%d:%lu] ❌ dequeue failed after sem_trywait; length=%d ptr=%p\n", pid, tid, length, (void*)ptr);
         return NULL;
     }
-
-    // base/offset 계산 및 검사 로그
-    unsigned char *base = (unsigned char*)ptr - 4;
-    uintptr_t pool_lo = (uintptr_t)&g_pool->data[0][0];
-    uintptr_t pool_hi = (uintptr_t)&g_pool->data[POOL_COUNT][0];
-    ptrdiff_t off = (unsigned char*)base - &g_pool->data[0][0];
-    uint32_t idx = (uint32_t)(off / SAMPLE_SIZE);
-
-    // fprintf(stderr,
-    //     "[JNI][%d:%lu] DEQ ok: payload=%p len=%d base=%p idx=%u off=%td pool=[%p..%p)\n",
-    //     pid, tid, (void*)ptr, length, (void*)base, idx, off, (void*)pool_lo, (void*)pool_hi);
-
-    // ---- 안전한 방법 (B): 별도 메모리에 복사 후 풀 즉시 반납 ----
-    void *copy = malloc((size_t)length);
-    if (!copy) {
-        fprintf(stderr, "[JNI][%d:%lu] ❌ malloc(%d) failed\n", pid, tid, length);
-        // 풀 반납은 해야 함
-        shm_pool_release(base);
-        return NULL;
-    }
-    memcpy(copy, ptr, (size_t)length);
-
-    // 이제 풀 반납 (복사 끝났으므로 안전)
-    shm_pool_release(base);
-    // 카운터
-    atomic_fetch_add_explicit(&deq_success_count, 1, memory_order_relaxed);
-
-    // 디버그 카운터 출력(선택)
-    uint64_t cnt = (uint64_t)atomic_load(&deq_success_count);
-    // fprintf(stderr, "[JNI][%d:%lu] 🎯 deq_success_count=%" PRIu64 "\n", pid, tid, cnt);
-
-    // DirectByteBuffer로 자바에 전달 (free는 자바에서 별도 JNI로 받거나, 아래처럼 Cleaner 등록을 고려)
-    jobject buf = (*env)->NewDirectByteBuffer(env, copy, (jlong)length);
+#ifdef BACKOFF_PROF
+    // ✅ 성공한 dequeue에 대해서만 누적
+    bk_deq_add(bk_now_ns() - t0, cas_wait_ns);
+#endif
+    jobject buf = (*env)->NewDirectByteBuffer(env, (void*)ptr, (jlong)length);
     if (buf == NULL) {
         fprintf(stderr, "[JNI][%d:%lu] ❌ NewDirectByteBuffer returned NULL\n", pid, tid);
-        free(copy);
+        // free(copy);
         return NULL;
     }
-
+#ifdef BACKOFF_PROF
+    // ✅ E2E 총 시간: sem_trywait~dequeue~memcpy~release~NewDirectByteBuffer 포함
+    bk_deq_add(bk_now_ns() - t0, cas_wait_ns);
+#endif
     return buf;
+}
+
+JNIEXPORT void JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryProducer_releaseSharedmemoryByBuffer(
+    JNIEnv *env, jobject obj, jobject buffer)
+{
+    if (!buffer) return;
+    void *addr = (*env)->GetDirectBufferAddress(env, buffer);
+    if(!addr) return;
+    unsigned char *base = (unsigned char*)addr - 4;
+    shm_pool_release(base);
 }
 
 JNIEXPORT void JNICALL

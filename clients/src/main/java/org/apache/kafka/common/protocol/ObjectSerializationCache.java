@@ -52,4 +52,8 @@ public final class ObjectSerializationCache {
         Object value = map.get(o);
         return (byte[]) value;
     }
+
+
+    // new!
+    public void clear() { map.clear(); }
 }

@@ -17,6 +17,14 @@ JNIEXPORT jobject JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryPro
 
 /*
  * Class:     org_apache_kafka_clients_producer_SharedMemoryProducer
+ * Method:    getPoolBigBuffer
+ * Signature: ()Ljava/nio/ByteBuffer;
+ */
+JNIEXPORT jobject JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryProducer_getPoolBigBuffer
+  (JNIEnv *, jclass);
+
+/*
+ * Class:     org_apache_kafka_clients_producer_SharedMemoryProducer
  * Method:    commitSharedMemoryByBuffer
  * Signature: (Ljava/nio/ByteBuffer;I)V
  */
@@ -38,6 +46,14 @@ JNIEXPORT jobject JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryPro
  */
 JNIEXPORT void JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryProducer_closeSharedMemory
   (JNIEnv *, jclass);
+
+/*
+ * Class:     org_apache_kafka_clients_producer_SharedMemoryProducer
+ * Method:    releaseSharedmemoryByBuffer
+ * Signature: (Ljava/nio/ByteBuffer;)V
+ */
+JNIEXPORT void JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryProducer_releaseSharedmemoryByBuffer
+  (JNIEnv *, jclass, jobject);
 
 #ifdef __cplusplus
 }

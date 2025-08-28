@@ -65,6 +65,21 @@ static inline void bk_enq_add(uint64_t total_ns,
     atomic_fetch_add(&g_enq_pub_cas_wait_ns, pubcas_wait_ns);
 }
 
+// --- ALLOCATE ---
+extern _Atomic uint64_t g_alloc_total_ns;
+extern _Atomic uint64_t g_alloc_cnt;
+extern _Atomic uint64_t g_alloc_cap_wait_ns;     // 용량 대기(consumer가 못 따라와서 full일 때)
+extern _Atomic uint64_t g_alloc_pub_cas_wait_ns; // prod_pub CAS 전후 대기
+
+static inline void bk_alloc_add(uint64_t total_ns,
+                              uint64_t cap_wait_ns,
+                              uint64_t pubcas_wait_ns){
+    atomic_fetch_add(&g_alloc_total_ns, total_ns);
+    atomic_fetch_add(&g_alloc_cnt, 1);
+    atomic_fetch_add(&g_alloc_cap_wait_ns, cap_wait_ns);
+    atomic_fetch_add(&g_alloc_pub_cas_wait_ns, pubcas_wait_ns);
+}
+
 // --- DEQ ---
 extern _Atomic uint64_t g_deq_total_ns;
 extern _Atomic uint64_t g_deq_cnt;
@@ -79,6 +94,15 @@ static inline void bk_deq_add(uint64_t total_ns,
 
 /* 확장 출력 */
 static inline void bk_print_times_ext(void){
+    // allocate
+    uint64_t alloccnt = atomic_load(&g_alloc_cnt);
+    uint64_t allocns  = atomic_load(&g_alloc_total_ns);
+    uint64_t alloccap = atomic_load(&g_alloc_cap_wait_ns);
+    uint64_t allocpub = atomic_load(&g_alloc_pub_cas_wait_ns);
+    double alloc_avg_ns     = alloccnt ? (double)allocns/alloccnt   : 0.0;
+    double alloc_cap_avg_ns = alloccnt ? (double)alloccap/alloccnt  : 0.0;
+    double alloc_pub_avg_ns = alloccnt ? (double)allocpub/alloccnt  : 0.0;
+
     // enqueue
     uint64_t enqcnt = atomic_load(&g_enq_cnt);
     uint64_t enqns  = atomic_load(&g_enq_total_ns);
@@ -94,6 +118,11 @@ static inline void bk_print_times_ext(void){
     uint64_t deqcas = atomic_load(&g_deq_cas_wait_ns);
     double deq_avg_ns     = deqcnt ? (double)deqns/deqcnt   : 0.0;
     double deq_cas_avg_ns = deqcnt ? (double)deqcas/deqcnt  : 0.0;
+
+    fprintf(stderr,
+      "[time] alloc_avg=%.1f ns (calls=%" PRIu64 ") | alloc_total=%.3f ms | "
+      "alloc_cap_wait_avg=%.1f ns | alloc_pub_cas_wait_avg=%.1f ns\n",
+      alloc_avg_ns, alloccnt, (double)allocns/1e6, alloc_cap_avg_ns, alloc_pub_avg_ns);
 
     fprintf(stderr,
       "[time] enq_avg=%.1f ns (calls=%" PRIu64 ") | enq_total=%.3f ms | "

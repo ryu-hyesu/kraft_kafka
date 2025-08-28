@@ -38,7 +38,7 @@ import org.apache.kafka.clients.Metadata;
 import org.apache.kafka.clients.MetadataSnapshot;
 import org.apache.kafka.clients.NetworkClientUtils;
 import org.apache.kafka.clients.RequestCompletionHandler;
-import org.apache.kafka.clients.producer.SharedMemoryProducer;
+import org.apache.kafka.clients.producer.CsvPerfLogger;
 import org.apache.kafka.common.InvalidRecordException;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.MetricName;
@@ -60,13 +60,11 @@ import org.apache.kafka.common.metrics.Sensor;
 import org.apache.kafka.common.metrics.stats.Avg;
 import org.apache.kafka.common.metrics.stats.Max;
 import org.apache.kafka.common.metrics.stats.Meter;
-import org.apache.kafka.common.network.ByteBufferSend;
-import org.apache.kafka.common.network.Send;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.requests.AbstractRequest;
-import org.apache.kafka.common.requests.FindCoordinatorRequest;
+import org.apache.kafka.common.requests.FindCoordinatorRequest; // 추가
 import org.apache.kafka.common.requests.ProduceRequest;
 import org.apache.kafka.common.requests.ProduceResponse;
 import static org.apache.kafka.common.requests.ProduceResponse.INVALID_OFFSET;
@@ -75,6 +73,14 @@ import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
 import org.slf4j.Logger;
 
+// import org.apache.kafka.common.network.ByteBufferSend;
+// import org.apache.kafka.common.network.Send;
+
+
+import org.apache.kafka.common.protocol.ObjectSerializationCache;
+import org.apache.kafka.clients.producer.SharedMemoryProducer;
+import org.apache.kafka.common.protocol.ByteBufferAccessor;
+import java.nio.ByteOrder;
 /**
  * The background thread that handles the sending of produce requests to the Kafka cluster. This thread makes metadata
  * requests to renew its view of the cluster and then sends produce requests to the appropriate nodes.
@@ -858,6 +864,21 @@ public class Sender implements Runnable {
             sendProduceRequest(now, entry.getKey(), acks, requestTimeoutMs, entry.getValue());
     }
 
+    static public long SharedMemorymergeTime;
+    static public long SharedMemoryCommitTime;
+    static public long SharedMemoryTotalTime;
+
+    // 전역 1회 생성
+    static final CsvPerfLogger producerPerfLogger;
+    static {
+        try {
+            producerPerfLogger = new CsvPerfLogger("/tmp/prod_perf.csv", 100); // 100건당 1건
+        } catch (IOException e) { throw new RuntimeException(e); }
+    }
+
+    private static final ThreadLocal<ObjectSerializationCache> TLS_CACHE =
+    ThreadLocal.withInitial(ObjectSerializationCache::new);
+
     /**
      * Create a produce request from the given record batches
      */
@@ -902,48 +923,101 @@ public class Sender implements Runnable {
         ClientRequest clientRequest = client.newClientRequest(nodeId, requestBuilder, now, acks != 0,
                 requestTimeoutMs, callback);
 
-        // Shared Memory Hook
+        // 빌드
+        long tBuildS = System.nanoTime();
         AbstractRequest request = requestBuilder.build(requestBuilder.latestAllowedVersion());
         RequestHeader header = clientRequest.makeHeader(request.version());
-        Send send = request.toSend(header);
+        
+        // ObjectSerializationCache cache = new ObjectSerializationCache();
+        ObjectSerializationCache cache = TLS_CACHE.get();
+        cache.clear(); // 중요: 재사용 전에 초기화
 
-        // System.out.println(request);
+        int headerSize = header.size(cache);
+        int bodySize   = request.data().size(cache, request.version()); // data()는 GeneratedMessage
+        int totalSize  = 4 + headerSize + bodySize;
 
-        if (send instanceof ByteBufferSend) {
-            ByteBufferSend bufferData = (ByteBufferSend) send;
-            // 전체 데이터를 저장할 하나의 directBuffer 준비
-            int totalCapacity = 0;
-            for(ByteBuffer buffer : bufferData.getBuffers()) {
-                totalCapacity += buffer.remaining();  // 전체 크기 계산
-            }
+        ByteBuffer directbuffer = SharedMemoryProducer.allocateSharedMemoryByBuffer();
+        directbuffer.clear();
+        directbuffer.order(ByteOrder.BIG_ENDIAN);
+        directbuffer.putInt(totalSize - 4);
 
-            // 전체 데이터를 담을 directBuffer 생성
-            ByteBuffer directBuffer = SharedMemoryProducer.allocateSharedMemoryByBuffer();
-            if (directBuffer == null) {
-                throw new IllegalStateException("❌ No available shared memory slot (shm_pool exhausted)");
-            }
+        ByteBufferAccessor byteBufferAccessor = new ByteBufferAccessor(directbuffer);
+        header.write(byteBufferAccessor, cache);
+        request.data().write(byteBufferAccessor, cache, request.version());
+        // directbuffer.flip();
 
-            if (directBuffer.capacity() < totalCapacity) {
-                throw new IllegalStateException(String.format(
-                    "❌ Shared memory slot too small: need %d bytes but got %d bytes",
-                    totalCapacity, directBuffer.capacity()
-                ));
-            }
+        // int len = directbuffer.remaining(); // 실제 기록된 바이트 수
+        SharedMemoryProducer.commitSharedMemoryByBuffer(directbuffer, totalSize);
+        long t0ns = System.nanoTime();  
+        double short_time = (t0ns - tBuildS) / 1e6;
+
+        // printHex(directbuffer);
+        if (short_time > 1)
+            System.out.println("[시간 단축] : " + short_time);
+
+        // Send send = request.toSend(header);
+        // double origin_time = 0;
+
+        // if (send instanceof ByteBufferSend) {
+        //     ByteBufferSend bufferData = (ByteBufferSend) send;
+
+        //     // 2) allocate (SHM 슬롯 확보)
+        //     // tAllocS = System.nanoTime();
+        //     long totalCapacity = bufferData.size(); // Kafka가 계산한 총 바이트 수
+        //     ByteBuffer directBuffer = SharedMemoryProducer.allocateSharedMemoryByBuffer();
+        //     if (directBuffer == null) {
+        //         throw new IllegalStateException("❌ No available shared memory slot (shm_pool exhausted)");
+        //     }
+        //     if ((long) directBuffer.capacity() < totalCapacity) {
+        //         throw new IllegalStateException(String.format(
+        //             "❌ Shared memory slot too small: need %d bytes but got %d bytes",
+        //             totalCapacity, directBuffer.capacity()
+        //         ));
+        //     }
+
+        //     for (ByteBuffer buf : bufferData.getBuffers()) {
+        //         directBuffer.put(buf.duplicate());
+        //     }
+        //     directBuffer.flip(); // 읽기 모드
             
-            // ByteBuffer.allocateDirect(totalCapacity);
-            // 각 buffer의 데이터를 directBuffer에 합침
-            for (ByteBuffer buffer : bufferData.getBuffers()) {
-                directBuffer.put(buffer.duplicate());  // regardless of direct or not
-            }
-            
-            directBuffer.flip();  // 읽기 모드로 전환
-            
-            // 한 번에 쓰기
-            SharedMemoryProducer.commitSharedMemoryByBuffer(directBuffer, directBuffer.capacity());
-            // directBuffer.clear();  // directBuffer 초기화
-        }
+        //     int len = directBuffer.remaining(); // 실제 기록된 바이트 수
+        //     SharedMemoryProducer.commitSharedMemoryByBuffer(directBuffer, len);
 
-        // client.send(clientRequest, now); // NETWORK
+        //     long tCommitE = System.nanoTime();
+            
+        //     // tCommitE = System.nanoTime();
+        //     origin_time = (tCommitE - tBuildS) / 1e6;
+        //     // printHex(directBuffer);
+        //     if (origin_time > 1) {
+        //         System.out.println("[원래 걸리던 시간] : " + origin_time);
+        //     }
+            
+
+        // } 
+        //else {
+        //     // ByteBufferSend가 아니라면 이후 구간은 0으로 둔다.
+        //     // tAllocS = tAllocE = tMergeE = tCommitE = tSendE;
+        // }
+
+        // double p2_alloc_ms = (tAllocE - tAllocS) / 1e6;
+        // double p3_merge_ms = (tMergeE - tAllocE) / 1e6;
+        // double p4_commit_ms= (tCommitE - tMergeE) / 1e6;
+
+        // double total_ms    = (tCommitE - tBuildS) / 1e6;
+
+        // // 더함
+        // SharedMemorymergeTime  += (p2_alloc_ms + p3_merge_ms); 
+        // SharedMemoryCommitTime += p4_commit_ms;
+        SharedMemoryTotalTime  += short_time;
+
+        // // 1ms 수치 넘을 때만. 근데 1ms는 미미해서 더 크게 잡아도 ㄱㅊ을듯
+        // if (total_ms > 1) {
+        //     System.out.printf(
+        //         "build=%.3fms send=%.3fms alloc=%.3fms merge=%.3fms commit=%.3fms total=%.3fms%n",
+        //         p0_build_ms, p1_send_ms, p2_alloc_ms, p3_merge_ms, p4_commit_ms, total_ms
+        //     );
+        // }
+
         log.trace("Sent produce request to {}: {}", nodeId, requestBuilder);
     }
 

@@ -96,12 +96,6 @@ bool buffer_try_enqueue(LockFreeRingBuffer *rb, const char *data, int length) {
     const unsigned char *pool_begin = &g_pool->data[0][0];
     const unsigned char *pool_limit = &g_pool->data[POOL_COUNT][0]; // exclusive
 
-#ifdef BACKOFF_PROF
-    uint64_t t0 = bk_now_ns();
-    uint64_t cap_wait_ns = 0;
-    uint64_t pubcas_wait_ns = 0;
-#endif
-
     if ((const unsigned char*)data < pool_begin || (const unsigned char*)data >= pool_limit) {
         size_t span = (size_t)(pool_limit - pool_begin);
         fprintf(stderr, "❌ [ENQ] OOR ptr=%p begin=%p limit=%p span=%zu SAMPLE_SIZE=%d POOL_COUNT=%d\n",
@@ -110,9 +104,6 @@ bool buffer_try_enqueue(LockFreeRingBuffer *rb, const char *data, int length) {
         ptrdiff_t diff = (const unsigned char*)data - pool_limit;
         fprintf(stderr, "👉 diff_from_limit=%td (should be < 0). slots_over=%td\n",
                 diff, diff / SAMPLE_SIZE);
-#ifdef BACKOFF_PROF
-        bk_enq_add(bk_now_ns()-t0, cap_wait_ns, pubcas_wait_ns);
-#endif
         return false;
     }
 
@@ -121,18 +112,12 @@ bool buffer_try_enqueue(LockFreeRingBuffer *rb, const char *data, int length) {
     if (off % SAMPLE_SIZE != 0) {
         fprintf(stderr, "❌ [ENQ] misaligned ptr=%p off=%zu SAMPLE_SIZE=%d\n",
                 data, off, SAMPLE_SIZE);
-#ifdef BACKOFF_PROF
-        bk_enq_add(bk_now_ns()-t0, cap_wait_ns, pubcas_wait_ns);
-#endif
         return false;
     }
     uint32_t idx_dbg = off / SAMPLE_SIZE;
     if (idx_dbg >= POOL_COUNT) {
         fprintf(stderr, "❌ [ENQ] idx=%u >= POOL_COUNT=%u (off=%zu)\n",
                 idx_dbg, POOL_COUNT, off);
-#ifdef BACKOFF_PROF
-        bk_enq_add(bk_now_ns()-t0, cap_wait_ns, pubcas_wait_ns);
-#endif
         return false;
     }
 
@@ -144,13 +129,7 @@ bool buffer_try_enqueue(LockFreeRingBuffer *rb, const char *data, int length) {
     for (int spin = 0;
         (int32_t)(my - atomic_load_explicit(&rb->cons_seq, memory_order_relaxed)) >= (int32_t)BUF_COUNT;
         ++spin) {
-#ifdef BACKOFF_PROF
-        uint64_t w0 = bk_now_ns();
-#endif
         backoff_spin(spin);
-#ifdef BACKOFF_PROF
-        cap_wait_ns += bk_now_ns() - w0;
-#endif
     }
 
     // 3) 슬롯 쓰기
@@ -166,18 +145,9 @@ bool buffer_try_enqueue(LockFreeRingBuffer *rb, const char *data, int length) {
                 &rb->prod_pub, &pub, my+1,
                 memory_order_release, memory_order_relaxed)) break;
         } else {
-#ifdef BACKOFF_PROF
-            uint64_t w0 = bk_now_ns();
-#endif
             backoff_spin(++attempt);
-#ifdef BACKOFF_PROF
-            pubcas_wait_ns += bk_now_ns() - w0;
-#endif
         }
     }
-#ifdef BACKOFF_PROF
-    bk_enq_add(bk_now_ns() - t0, cap_wait_ns, pubcas_wait_ns);
-#endif
     return true;
 }
 
@@ -187,11 +157,6 @@ bool buffer_try_dequeue(LockFreeRingBuffer *rb, const char **out_ptr, int *out_l
     void *pool_start = &g_pool->data[0][0];
     void *pool_end   = &g_pool->data[POOL_COUNT - 1][SAMPLE_SIZE - 1];
     
-#ifdef BACKOFF_PROF
-
-    uint64_t t0 = bk_now_ns();
-    uint64_t cas_wait_ns = 0;    // cons_seq CAS 실패로 인한 backoff 대기
-#endif
     int attempt = 0;
     for (;;) {
         uint32_t head = atomic_load_explicit(&rb->cons_seq, memory_order_relaxed);
@@ -204,13 +169,8 @@ bool buffer_try_dequeue(LockFreeRingBuffer *rb, const char **out_ptr, int *out_l
         if (!atomic_compare_exchange_weak_explicit(
                 &rb->cons_seq, &exp, new_head,
                 memory_order_acquire, memory_order_relaxed)) {
-#ifdef BACKOFF_PROF
-            uint64_t w0 = bk_now_ns();
-#endif
+
             backoff_spin(++attempt);
-#ifdef BACKOFF_PROF
-            cas_wait_ns += bk_now_ns() - w0;
-#endif
             continue; // 경쟁 → 재시도
         }
 
@@ -232,9 +192,6 @@ bool buffer_try_dequeue(LockFreeRingBuffer *rb, const char **out_ptr, int *out_l
         *out_ptr   = p + 4;
         *out_length = msg_len;
         // atomic_fetch_add_explicit(&deq_success_count, 1, memory_order_relaxed);
-#ifdef BACKOFF_PROF
-    bk_deq_add(bk_now_ns() - t0, cas_wait_ns);
-#endif
         return true;
     }
 }
