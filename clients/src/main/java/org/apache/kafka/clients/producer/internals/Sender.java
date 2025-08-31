@@ -73,8 +73,8 @@ import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
 import org.slf4j.Logger;
 
-// import org.apache.kafka.common.network.ByteBufferSend;
-// import org.apache.kafka.common.network.Send;
+import org.apache.kafka.common.network.ByteBufferSend;
+import org.apache.kafka.common.network.Send;
 
 
 import org.apache.kafka.common.protocol.ObjectSerializationCache;
@@ -881,158 +881,107 @@ public class Sender implements Runnable {
 
     /**
      * Create a produce request from the given record batches
-     */
-    private void sendProduceRequest(long now, int destination, short acks, int timeout, List<ProducerBatch> batches) {
-        if (batches.isEmpty())
-            return;
+     */ 
+// 0830
+private void sendProduceRequest(long now, int destination, short acks, int timeout, List<ProducerBatch> batches) {
+    if (batches.isEmpty())
+        return;
 
-        final Map<TopicPartition, ProducerBatch> recordsByPartition = new HashMap<>(batches.size());
-        ProduceRequestData.TopicProduceDataCollection tpd = new ProduceRequestData.TopicProduceDataCollection();
-        for (ProducerBatch batch : batches) {
-            TopicPartition tp = batch.topicPartition;
-            MemoryRecords records = batch.records();
-            ProduceRequestData.TopicProduceData tpData = tpd.find(tp.topic());
-            if (tpData == null) {
-                tpData = new ProduceRequestData.TopicProduceData().setName(tp.topic());
-                tpd.add(tpData);
-            }
-            tpData.partitionData().add(new ProduceRequestData.PartitionProduceData()
-                    .setIndex(tp.partition())
-                    .setRecords(records));
-            recordsByPartition.put(tp, batch);
+    final Map<TopicPartition, ProducerBatch> recordsByPartition = new HashMap<>(batches.size());
+    ProduceRequestData.TopicProduceDataCollection tpd = new ProduceRequestData.TopicProduceDataCollection();
+    for (ProducerBatch batch : batches) {
+        TopicPartition tp = batch.topicPartition;
+        MemoryRecords records = batch.records();
+        ProduceRequestData.TopicProduceData tpData = tpd.find(tp.topic());
+        if (tpData == null) {
+            tpData = new ProduceRequestData.TopicProduceData().setName(tp.topic());
+            tpd.add(tpData);
         }
-
-        String transactionalId = null;
-        boolean useTransactionV1Version = false;
-        if (transactionManager != null && transactionManager.isTransactional()) {
-            transactionalId = transactionManager.transactionalId();
-            useTransactionV1Version = !transactionManager.isTransactionV2Enabled();
-        }
-
-        ProduceRequest.Builder requestBuilder = ProduceRequest.builder(
-                new ProduceRequestData()
-                        .setAcks(acks)
-                        .setTimeoutMs(timeout)
-                        .setTransactionalId(transactionalId)
-                        .setTopicData(tpd),
-                useTransactionV1Version
-        );
-        RequestCompletionHandler callback = response -> handleProduceResponse(response, recordsByPartition, time.milliseconds());
-
-        String nodeId = Integer.toString(destination);
-        ClientRequest clientRequest = client.newClientRequest(nodeId, requestBuilder, now, acks != 0,
-                requestTimeoutMs, callback);
-
-        // 빌드
-        long tBuildS = System.nanoTime();
-        AbstractRequest request = requestBuilder.build(requestBuilder.latestAllowedVersion());
-        RequestHeader header = clientRequest.makeHeader(request.version());
-        
-        // ObjectSerializationCache cache = new ObjectSerializationCache();
-        ObjectSerializationCache cache = TLS_CACHE.get();
-        cache.clear(); // 중요: 재사용 전에 초기화
-
-        int headerSize = header.size(cache);
-        int bodySize   = request.data().size(cache, request.version()); // data()는 GeneratedMessage
-        int totalSize  = 4 + headerSize + bodySize;
-
-        ByteBuffer directbuffer = SharedMemoryProducer.allocateSharedMemoryByBuffer();
-        directbuffer.clear();
-        directbuffer.order(ByteOrder.BIG_ENDIAN);
-        directbuffer.putInt(totalSize - 4);
-
-        ByteBufferAccessor byteBufferAccessor = new ByteBufferAccessor(directbuffer);
-        header.write(byteBufferAccessor, cache);
-        request.data().write(byteBufferAccessor, cache, request.version());
-        // directbuffer.flip();
-
-        // int len = directbuffer.remaining(); // 실제 기록된 바이트 수
-        SharedMemoryProducer.commitSharedMemoryByBuffer(directbuffer, totalSize);
-        long t0ns = System.nanoTime();  
-        double short_time = (t0ns - tBuildS) / 1e6;
-
-        // printHex(directbuffer);
-        if (short_time > 1)
-            System.out.println("[시간 단축] : " + short_time);
-
-        // Send send = request.toSend(header);
-        // double origin_time = 0;
-
-        // if (send instanceof ByteBufferSend) {
-        //     ByteBufferSend bufferData = (ByteBufferSend) send;
-
-        //     // 2) allocate (SHM 슬롯 확보)
-        //     // tAllocS = System.nanoTime();
-        //     long totalCapacity = bufferData.size(); // Kafka가 계산한 총 바이트 수
-        //     ByteBuffer directBuffer = SharedMemoryProducer.allocateSharedMemoryByBuffer();
-        //     if (directBuffer == null) {
-        //         throw new IllegalStateException("❌ No available shared memory slot (shm_pool exhausted)");
-        //     }
-        //     if ((long) directBuffer.capacity() < totalCapacity) {
-        //         throw new IllegalStateException(String.format(
-        //             "❌ Shared memory slot too small: need %d bytes but got %d bytes",
-        //             totalCapacity, directBuffer.capacity()
-        //         ));
-        //     }
-
-        //     for (ByteBuffer buf : bufferData.getBuffers()) {
-        //         directBuffer.put(buf.duplicate());
-        //     }
-        //     directBuffer.flip(); // 읽기 모드
-            
-        //     int len = directBuffer.remaining(); // 실제 기록된 바이트 수
-        //     SharedMemoryProducer.commitSharedMemoryByBuffer(directBuffer, len);
-
-        //     long tCommitE = System.nanoTime();
-            
-        //     // tCommitE = System.nanoTime();
-        //     origin_time = (tCommitE - tBuildS) / 1e6;
-        //     // printHex(directBuffer);
-        //     if (origin_time > 1) {
-        //         System.out.println("[원래 걸리던 시간] : " + origin_time);
-        //     }
-            
-
-        // } 
-        //else {
-        //     // ByteBufferSend가 아니라면 이후 구간은 0으로 둔다.
-        //     // tAllocS = tAllocE = tMergeE = tCommitE = tSendE;
-        // }
-
-        // double p2_alloc_ms = (tAllocE - tAllocS) / 1e6;
-        // double p3_merge_ms = (tMergeE - tAllocE) / 1e6;
-        // double p4_commit_ms= (tCommitE - tMergeE) / 1e6;
-
-        // double total_ms    = (tCommitE - tBuildS) / 1e6;
-
-        // // 더함
-        // SharedMemorymergeTime  += (p2_alloc_ms + p3_merge_ms); 
-        // SharedMemoryCommitTime += p4_commit_ms;
-        SharedMemoryTotalTime  += short_time;
-
-        // // 1ms 수치 넘을 때만. 근데 1ms는 미미해서 더 크게 잡아도 ㄱㅊ을듯
-        // if (total_ms > 1) {
-        //     System.out.printf(
-        //         "build=%.3fms send=%.3fms alloc=%.3fms merge=%.3fms commit=%.3fms total=%.3fms%n",
-        //         p0_build_ms, p1_send_ms, p2_alloc_ms, p3_merge_ms, p4_commit_ms, total_ms
-        //     );
-        // }
-
-        log.trace("Sent produce request to {}: {}", nodeId, requestBuilder);
+        tpData.partitionData().add(new ProduceRequestData.PartitionProduceData()
+                .setIndex(tp.partition())
+                .setRecords(records));
+        recordsByPartition.put(tp, batch);
     }
 
-    // 16진수 출력 메서드
-    private static void printHex(ByteBuffer buffer) {
-        StringBuilder hexString = new StringBuilder();
-        while (buffer.hasRemaining()) {
-            hexString.append(String.format("%02X ", buffer.get())); // %02X로 2자리 16진수로 출력
-        }
-        System.out.println(hexString.toString());
+    String transactionalId = null;
+    boolean useTransactionV1Version = false;
+    if (transactionManager != null && transactionManager.isTransactional()) {
+        transactionalId = transactionManager.transactionalId();
+        useTransactionV1Version = !transactionManager.isTransactionV2Enabled();
     }
 
+    ProduceRequest.Builder requestBuilder = ProduceRequest.builder(
+            new ProduceRequestData()
+                    .setAcks(acks)
+                    .setTimeoutMs(timeout)
+                    .setTransactionalId(transactionalId)
+                    .setTopicData(tpd),
+            useTransactionV1Version
+    );
+    RequestCompletionHandler callback = response -> handleProduceResponse(response, recordsByPartition, time.milliseconds());
+    String nodeId = Integer.toString(destination);
+    ClientRequest clientRequest = client.newClientRequest(nodeId, requestBuilder, now, acks != 0, requestTimeoutMs, callback);
+    
+    // 빌드
+    AbstractRequest request = requestBuilder.build(requestBuilder.latestAllowedVersion());
+    RequestHeader header = clientRequest.makeHeader(request.version());
+
+    // ObjectSerializationCache 사용
+    ObjectSerializationCache cache = TLS_CACHE.get();
+    cache.clear();
+
+    int headerSize = header.size(cache);
+    int bodySize = request.data().size(cache, request.version());
+    int totalSize = 4 + headerSize + bodySize;
+
+    // ➤ 1. BigBuffer 확보 (전체 풀)
+    ByteBuffer bigBuffer = SharedMemoryProducer.getPoolBigBuffer();
+    if (bigBuffer == null)
+        throw new IllegalStateException("❌ Failed to get shared memory big buffer");
+
+    // ➤ 2. 인덱스 확보
+    int index = SharedMemoryProducer.allocateSharedMemoryIndex();
+    if (index < 0)
+        throw new IllegalStateException("❌ No available shared memory slot (pool exhausted)");
+    
+    final int SAMPLE_SIZE = SharedMemoryProducer.SLOT_SIZE; // 일반적으로 1MB
+    int offset = index * SAMPLE_SIZE;
+
+    if (totalSize > SAMPLE_SIZE) {
+        SharedMemoryProducer.releaseSharedMemoryIndex(index);
+        throw new IllegalStateException(String.format(
+                "❌ ProduceRequest size (%d) exceeds shared memory slot size (%d)", totalSize, SAMPLE_SIZE));
+    }
+
+    // ➤ 3. Slot 영역만 slice
+    ByteBuffer slotBuffer = bigBuffer.duplicate();
+    slotBuffer.position(offset);
+    slotBuffer.limit(offset + SAMPLE_SIZE);
+    ByteBuffer slice = slotBuffer.slice();
+    slice.order(ByteOrder.BIG_ENDIAN);
+    slice.clear();
+
+    // ➤ 4. 요청 직렬화
+    slice.putInt(totalSize - 4);
+    ByteBufferAccessor accessor = new ByteBufferAccessor(slice);
+    header.write(accessor, cache);
+    request.data().write(accessor, cache, request.version());
+
+    // ➤ 5. 커밋
+    boolean committed = SharedMemoryProducer.commitSharedMemoryByIndex(index, totalSize);
+    if (!committed) {
+        SharedMemoryProducer.releaseSharedMemoryIndex(index);
+        throw new IllegalStateException("failed to commit shm");
+    }
+
+    log.trace("Sent produce request via shared memory (slot index {}) to {}: {}", index, destination, requestBuilder);
+}
+
+     
+     
     /**
      * Wake up the selector associated with this send thread
-     */
+     s*/
     public void wakeup() {
         this.client.wakeup();
     }

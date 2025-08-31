@@ -14,20 +14,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.kafka.clients.producer;
+
 import java.nio.ByteBuffer;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class SharedMemoryProducer {
-
+    public static final int SLOT_SIZE = 1024 * 1024;
     static {
         System.loadLibrary("sharedmemory");
     }
 
-    public static native ByteBuffer allocateSharedMemoryByBuffer();
     public static native ByteBuffer getPoolBigBuffer();
+    public static native ByteBuffer allocateSharedMemoryByBuffer();
     public static native void commitSharedMemoryByBuffer(ByteBuffer content, int length);
     public static native ByteBuffer readSharedMemoryByBuffer();
     public static native void closeSharedMemory();
     public static native void releaseSharedmemoryByBuffer(ByteBuffer content);
+    public static native int allocateSharedMemoryIndex();
+    public static native boolean commitSharedMemoryByIndex(int index, int length);
+    public static native void releaseSharedMemoryIndex(int index);
 }
+

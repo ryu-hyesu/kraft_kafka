@@ -260,7 +260,7 @@ class SocketServer(
   abstract class AbstractMemoryPollingTask(requestChannel: RequestChannel, connectionId: String) extends Runnable {
     @volatile private var running = true
     private var thread: Option[Thread] = None
-
+    private var currentMsg: SharedMemoryMesssage = _
     def readSharedMemory(): ByteBuffer
     def releaseSharedMemory(buf: ByteBuffer): Unit
 
@@ -345,7 +345,7 @@ class SocketServer(
   class MemoryPollingTaskProducer(requestChannel: RequestChannel)
     extends AbstractMemoryPollingTask(requestChannel, "dummy-connection-producer") {
     override def readSharedMemory(): ByteBuffer = 
-      SharedMemoryProducer.readSharedMemoryByBuffer()
+      SharedMemoryProducer.readSharedMemoryByIndex()
     override def releaseSharedMemory(buf: ByteBuffer): Unit =
       SharedMemoryProducer.releaseSharedmemoryByBuffer(buf)
   }
