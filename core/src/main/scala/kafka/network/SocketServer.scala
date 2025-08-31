@@ -56,6 +56,7 @@ import org.slf4j.event.Level
 
 import org.apache.kafka.clients.producer.CsvPerfLogger
 import org.apache.kafka.clients.producer.SharedMemoryProducer
+import org.apache.kafka.clients.producer.SharedMemoryMessage
 import org.apache.kafka.clients.consumer.SharedMemoryConsumer
 
 import scala.collection._
@@ -343,8 +344,9 @@ class SocketServer(
   }
   
   class MemoryPollingTaskProducer(requestChannel: RequestChannel)
+    @volatile private var lastReadIndex: Int = -1
     extends AbstractMemoryPollingTask(requestChannel, "dummy-connection-producer") {
-    override def readSharedMemory(): ByteBuffer = 
+    override def readSharedMemory(): ByteBuffer = {
       SharedMemoryProducer.readSharedMemoryByIndex()
     override def releaseSharedMemory(buf: ByteBuffer): Unit =
       SharedMemoryProducer.releaseSharedmemoryByBuffer(buf)
