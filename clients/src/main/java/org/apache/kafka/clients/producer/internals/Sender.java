@@ -944,7 +944,7 @@ private void sendProduceRequest(long now, int destination, short acks, int timeo
     if (index < 0)
         throw new IllegalStateException("❌ No available shared memory slot (pool exhausted)");
     
-    final int SAMPLE_SIZE = SharedMemoryProducer.SLOT_SIZE; // 일반적으로 1MB
+    final int SAMPLE_SIZE = 32768; // 일반적으로 1MB
     int offset = index * SAMPLE_SIZE;
 
     if (totalSize > SAMPLE_SIZE) {
@@ -977,8 +977,15 @@ private void sendProduceRequest(long now, int destination, short acks, int timeo
     log.trace("Sent produce request via shared memory (slot index {}) to {}: {}", index, destination, requestBuilder);
 }
 
-     
-     
+    private static void printHex(ByteBuffer buffer) {
+        StringBuilder hexString = new StringBuilder();
+        while (buffer.hasRemaining()) {
+            hexString.append(String.format("%02X ", buffer.get())); // %02X로 2자리 16진수로 출력
+        }
+        System.out.println(hexString.toString());
+    }
+
+
     /**
      * Wake up the selector associated with this send thread
      s*/

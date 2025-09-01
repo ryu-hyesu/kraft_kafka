@@ -87,8 +87,6 @@ uint32_t ptr_to_offset(const char* ptr) {
     return (uint32_t)(ptr - (char*)(&g_pool->data[0][0]));
 }
 
-
-
 bool buffer_try_enqueue(LockFreeRingBuffer *rb, const char *data, int length) {
     if (!data || length < 4 || length > SAMPLE_SIZE || !g_pool->data) return false;
 
@@ -148,7 +146,48 @@ bool buffer_try_enqueue(LockFreeRingBuffer *rb, const char *data, int length) {
             backoff_spin(++attempt);
         }
     }
+
     return true;
+}
+
+bool buffer_try_dequeue_idx(LockFreeRingBuffer *rb, uint32_t* out_idx, int *out_length) {
+fprintf(stderr, "g_pool\n");
+    if (!g_pool) return false;
+
+    void *pool_start = &g_pool->data[0][0];
+    void *pool_end   = &g_pool->data[POOL_COUNT - 1][SAMPLE_SIZE - 1];
+    fprintf(stderr, "pool_start\n");
+    int attempt = 0;
+    for (;;) {
+        uint32_t head = atomic_load_explicit(&rb->cons_seq, memory_order_relaxed);
+        uint32_t tail = atomic_load_explicit(&rb->prod_pub, memory_order_acquire);
+
+        if (head == tail) return false; // empty
+
+        uint32_t new_head = head + 1;
+        uint32_t exp = head;
+        if (!atomic_compare_exchange_weak_explicit(
+                &rb->cons_seq, &exp, new_head,
+                memory_order_acquire, memory_order_relaxed)) {
+
+            backoff_spin(++attempt);
+            continue; // 경쟁 → 재시도
+        }
+
+        uint32_t offset = rb->offset[head & (BUF_COUNT - 1)];
+        const unsigned char* slot = (const unsigned char*)&g_pool->data[0][0] + offset;
+
+        int msg_len = read_be32(slot);
+        if (msg_len <= 0 || msg_len > SAMPLE_SIZE - 4) {
+            fprintf(stderr, "❌ [DEQ] invalid message length: %d\n", msg_len);
+            return false;
+        }
+        fprintf(stderr, "msg_len\n");
+        *out_idx   = offset / SAMPLE_SIZE;
+        *out_length = msg_len;
+        // atomic_fetch_add_explicit(&deq_success_count, 1, memory_order_relaxed);
+        return true;
+    }
 }
 
 bool buffer_try_dequeue(LockFreeRingBuffer *rb, const char **out_ptr, int *out_length) {
@@ -156,7 +195,7 @@ bool buffer_try_dequeue(LockFreeRingBuffer *rb, const char **out_ptr, int *out_l
 
     void *pool_start = &g_pool->data[0][0];
     void *pool_end   = &g_pool->data[POOL_COUNT - 1][SAMPLE_SIZE - 1];
-    
+
     int attempt = 0;
     for (;;) {
         uint32_t head = atomic_load_explicit(&rb->cons_seq, memory_order_relaxed);

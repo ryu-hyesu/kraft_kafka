@@ -20,7 +20,7 @@ import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class SharedMemoryProducer {
-    public static final int SLOT_SIZE = 1024 * 1024;
+    public static final int SLOT_SIZE = 32768;
     static {
         System.loadLibrary("sharedmemory");
     }
@@ -29,7 +29,7 @@ public class SharedMemoryProducer {
     public static native ByteBuffer allocateSharedMemoryByBuffer();
     public static native void commitSharedMemoryByBuffer(ByteBuffer content, int length);
     public static native ByteBuffer readSharedMemoryByBuffer();
-    public static native ByteBuffer readSharedMemoryByIndex();
+    public static native long readSharedMemoryByIndex();
     public static native void closeSharedMemory();
     public static native void releaseSharedmemoryByBuffer(ByteBuffer content);
     public static native int allocateSharedMemoryIndex();

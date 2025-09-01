@@ -19,7 +19,7 @@ _Atomic uint64_t g_bk_yield_ns_tot = 0, g_bk_nanos_ns_tot = 0;
 
 _Atomic uint64_t g_enq_total_ns = 0;
 _Atomic uint64_t g_enq_cnt = 0;
-_Atomic uint64_t g_enq_cap_wait_ns = 0;    
+_Atomic uint64_t g_enq_cap_wait_ns = 0;
 _Atomic uint64_t g_enq_pub_cas_wait_ns = 0;
 
 _Atomic uint64_t g_deq_total_ns = 0;
@@ -154,17 +154,17 @@ Java_org_apache_kafka_clients_producer_SharedMemoryProducer_commitSharedMemoryBy
     }
 }
 
-// 명시적 인덱스 반납
-JNIEXPORT void JNICALL
-Java_org_apache_kafka_clients_producer_SharedMemoryProducer_releaseSharedMemoryIndex(
-    JNIEnv *env, jobject obj, jint jidx)
-{
-    if (!g_pool) return;
-    if (jidx < 0 || jidx >= (jint)POOL_COUNT) return;
-    unsigned char* base = &g_pool->data[0][0];
-    unsigned char* slot = base + ((size_t)jidx * (size_t)SAMPLE_SIZE);
-    shm_pool_release(slot);
-}
+//JNIEXPORT void JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryProducer_releaseSharedmemoryByBuffer(
+//    JNIEnv *env, jobject obj, jobject buffer)
+//{
+//    if (!buffer) return;
+//    void *addr = (*env)->GetDirectBufferAddress(env, buffer);
+//    if(!addr) return;
+//    unsigned char *base = (unsigned char*)addr - 4;
+//    shm_pool_release(base);
+//}
+
+
 
 // buffer를 받아서 enqueue
 JNIEXPORT void JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryProducer_commitSharedMemoryByBuffer(JNIEnv *env, jobject obj, jobject buffer, jint length) {
@@ -187,61 +187,19 @@ JNIEXPORT void JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryProduc
     }
 }
 
-JNIEXPORT jobject JNICALL
-Java_org_apache_kafka_clients_producer_SharedMemoryProducer_readSharedMemoryByIndex(JNIEnv *env, jobject obj) {
-    ENSURE_POOL_OR_RETURN(env, NULL);
-
-    if (!handle.rb || !handle.semaphore) {
-        if (initialize_shared_memory(&handle, "/prod_broker_shm", "/prod_broker_sem", true) != 0)
-            return NULL;
-    }
-
-    if (sem_trywait(handle.semaphore) == -1) {
-        if (errno != EAGAIN) {
-            perror("[SHM] sem_trywait failed");
-        }
-        return NULL;
-    }
-
-    const char *ptr = NULL;
-    int length = 0;
-    if (!buffer_try_dequeue(handle.rb, &ptr, &length)) {
-        fprintf(stderr, "[SHM] dequeue failed\n");
-        return NULL;
-    }
-
-    uintptr_t base = (uintptr_t)&g_pool->data[0][0];
-    uintptr_t p = (uintptr_t)ptr - 4;
-    int index = (int)((p - base) / SAMPLE_SIZE);
-
-    jobject buffer = (*env)->NewDirectByteBuffer(env, (void*)ptr, length);
-    if (!buffer) {
-        shm_pool_release((void*)p);
-        return NULL;
-    }
-
-    // Create result object: new SharedMemoryMessage(buffer, index)
-    jclass cls = (*env)->FindClass(env, "org/apache/kafka/clients/producer/SharedMemoryMessage");
-    jmethodID ctor = (*env)->GetMethodID(env, cls, "<init>", "(Ljava/nio/ByteBuffer;I)V");
-    jobject result = (*env)->NewObject(env, cls, ctor, buffer, (jint)index);
-    return result;
-}
-
-
-// consumer
-JNIEXPORT jobject JNICALL
-Java_org_apache_kafka_clients_producer_SharedMemoryProducer_readSharedMemoryByBuffer(
+JNIEXPORT jlong JNICALL
+Java_org_apache_kafka_clients_producer_SharedMemoryProducer_readSharedMemoryByIndex(
     JNIEnv *env, jobject obj)
 {
     pid_t pid = getpid();
     unsigned long tid = (unsigned long)pthread_self();
 
-    ENSURE_POOL_OR_RETURN(env, NULL);
+    ENSURE_POOL_OR_RETURN(env, -1);
 
     if (!handle.rb || !handle.semaphore) {
         if (initialize_shared_memory(&handle, "/prod_broker_shm", "/prod_broker_sem", true) != 0) {
             fprintf(stderr, "[JNI][%d:%lu] ❌ initialize_shared_memory failed\n", pid, tid);
-            return NULL;
+            return (jlong)0;
         }
     }
 
@@ -250,37 +208,84 @@ Java_org_apache_kafka_clients_producer_SharedMemoryProducer_readSharedMemoryByBu
         if (e != EAGAIN) {
             fprintf(stderr, "[JNI][%d:%lu] ⚠️ sem_trywait error: %s\n", pid, tid, strerror(e));
         }
-        return NULL;
+        return (jlong)0;
     }
 
-    const char *ptr = NULL;
+    uint32_t idx;
     int length = 0;
-    if (!buffer_try_dequeue(handle.rb, &ptr, &length)) {
-        fprintf(stderr, "[JNI][%d:%lu] ❌ dequeue failed after sem_trywait; length=%d ptr=%p\n", pid, tid, length, (void*)ptr);
-        return NULL;
+    if (!buffer_try_dequeue_idx(handle.rb, &idx, &length)) {
+        return (jlong)0;
     }
 
-    unsigned char *base = (unsigned char*)ptr - 4;
-
-    void *copy = malloc((size_t)length);
-    if (!copy) {
-        fprintf(stderr, "[JNI][%d:%lu] ❌ malloc(%d) failed\n", pid, tid, length);
-        shm_pool_release(base);
-        return NULL;
-    }
-    memcpy(copy, ptr, (size_t)length);
-    shm_pool_release(base);
-    atomic_fetch_add_explicit(&deq_success_count, 1, memory_order_relaxed);
-
-    jobject buf = (*env)->NewDirectByteBuffer(env, copy, (jlong)length);
-    if (buf == NULL) {
-        fprintf(stderr, "[JNI][%d:%lu] ❌ NewDirectByteBuffer returned NULL\n", pid, tid);
-        free(copy);
-        return NULL;
-    }
-
-    return buf;
+    return ((jlong)idx << 32) | (jlong)(uint32_t)length;
 }
+
+
+// 명시적 인덱스 반납
+JNIEXPORT void JNICALL
+Java_org_apache_kafka_clients_producer_SharedMemoryProducer_releaseSharedMemoryIndex(
+    JNIEnv *env, jobject obj, jint jidx)
+{
+    if (!g_pool) return;
+    if (jidx < 0 || jidx >= (jint)POOL_COUNT) return;
+    unsigned char* base = &g_pool->data[0][0];
+    unsigned char* slot = base + ((size_t)jidx * (size_t)SAMPLE_SIZE);
+    shm_pool_release(slot);
+}
+
+// consumer
+//JNIEXPORT jobject JNICALL
+//Java_org_apache_kafka_clients_producer_SharedMemoryProducer_readSharedMemoryByBuffer(
+//    JNIEnv *env, jobject obj)
+//{
+//    pid_t pid = getpid();
+//    unsigned long tid = (unsigned long)pthread_self();
+//
+//    ENSURE_POOL_OR_RETURN(env, NULL);
+//
+//    if (!handle.rb || !handle.semaphore) {
+//        if (initialize_shared_memory(&handle, "/prod_broker_shm", "/prod_broker_sem", true) != 0) {
+//            fprintf(stderr, "[JNI][%d:%lu] ❌ initialize_shared_memory failed\n", pid, tid);
+//            return NULL;
+//        }
+//    }
+//
+//    if (sem_trywait(handle.semaphore) == -1) {
+//        int e = errno;
+//        if (e != EAGAIN) {
+//            fprintf(stderr, "[JNI][%d:%lu] ⚠️ sem_trywait error: %s\n", pid, tid, strerror(e));
+//        }
+//        return NULL;
+//    }
+//
+//    const char *ptr = NULL;
+//    int length = 0;
+//    if (!buffer_try_dequeue(handle.rb, &ptr, &length)) {
+//        fprintf(stderr, "[JNI][%d:%lu] ❌ dequeue failed after sem_trywait; length=%d ptr=%p\n", pid, tid, length, (void*)ptr);
+//        return NULL;
+//    }
+//
+//    unsigned char *base = (unsigned char*)ptr - 4;
+//
+//    void *copy = malloc((size_t)length);
+//    if (!copy) {
+//        fprintf(stderr, "[JNI][%d:%lu] ❌ malloc(%d) failed\n", pid, tid, length);
+//        shm_pool_release(base);
+//        return NULL;
+//    }
+//    memcpy(copy, ptr, (size_t)length);
+//    shm_pool_release(base);
+//    atomic_fetch_add_explicit(&deq_success_count, 1, memory_order_relaxed);
+//
+//    jobject buf = (*env)->NewDirectByteBuffer(env, copy, (jlong)length);
+//    if (buf == NULL) {
+//        fprintf(stderr, "[JNI][%d:%lu] ❌ NewDirectByteBuffer returned NULL\n", pid, tid);
+//        free(copy);
+//        return NULL;
+//    }
+//
+//    return buf;
+//}
 
 // 종료
 JNIEXPORT void JNICALL

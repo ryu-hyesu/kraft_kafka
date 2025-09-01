@@ -131,6 +131,13 @@ int init_shared_memory_pool(void) {
 
     // 여기 도달 = 공유 측 READY 보장 → 로컬 fast-path READY
     atomic_store_explicit(&g_pool_inited, 2, memory_order_release);
+
+    fprintf(stderr,
+      "[POOL] base=%p end=%p meta=%p pool_count=%u sample=%u region=%" PRIu64 "\n",
+      &g_pool->data[0][0], &g_pool->data[POOL_COUNT][0], &g_pool->meta,
+      g_pool->meta.pool_count, g_pool->meta.sample_size, g_pool->meta.region_size);
+
+
     return 0;
 
 fail:
@@ -191,6 +198,7 @@ static inline int ptr_to_index(const unsigned char *p, uint32_t *out_idx) {
         fflush(stderr);
         return -1;
     }
+
     size_t off   = (size_t)(up - base);
     size_t delta = off % SAMPLE_SIZE;
     if (delta) {
@@ -252,7 +260,7 @@ void shm_pool_release(unsigned char* ptr) {
     uintptr_t base = (uintptr_t)&g_pool->data[0][0];
     uintptr_t end  = (uintptr_t)&g_pool->data[POOL_COUNT][0];
     uintptr_t up   = (uintptr_t)ptr;
-    if (up < base || up >= end) { fprintf(stderr,"[REL][FAIL OOR]\n"); return; }
+    if (up < base || up >= end) fprintf(stderr,"[REL][FAIL OOR] ptr=%p base=%p end=%p\n",(void*)up,(void*)base,(void*)end);
     size_t off = (size_t)(up - base);
     if (off % SAMPLE_SIZE)       { fprintf(stderr,"[REL][FAIL MISALN]\n"); return; }
     

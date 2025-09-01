@@ -20,6 +20,7 @@ package kafka.network
 import java.io.IOException
 import java.net._
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.nio.channels.{Selector => NSelector, _}
 import java.util
 import java.util.Optional
@@ -54,10 +55,8 @@ import org.apache.kafka.server.quota.QuotaUtils
 import org.apache.kafka.server.util.FutureUtils
 import org.slf4j.event.Level
 
-import org.apache.kafka.clients.producer.CsvPerfLogger
 import org.apache.kafka.clients.producer.SharedMemoryProducer
-import org.apache.kafka.clients.producer.SharedMemoryMessage
-import org.apache.kafka.clients.consumer.SharedMemoryConsumer
+//import org.apache.kafka.clients.consumer.SharedMemoryConsumer
 
 import scala.collection._
 import scala.collection.mutable.ArrayBuffer
@@ -76,14 +75,14 @@ import scala.util.control.ControlThrowable
  *      M Handler threads that handle requests and produce responses back to the processor threads for writing.
  */
 class SocketServer(
-  val config: KafkaConfig,
-  val metrics: Metrics,
-  val time: Time,
-  val credentialProvider: CredentialProvider,
-  val apiVersionManager: ApiVersionManager,
-  val socketFactory: ServerSocketFactory = ServerSocketFactory.INSTANCE,
-  val connectionDisconnectListeners: Seq[ConnectionDisconnectListener] = Seq.empty
-) extends Logging with BrokerReconfigurable {
+                    val config: KafkaConfig,
+                    val metrics: Metrics,
+                    val time: Time,
+                    val credentialProvider: CredentialProvider,
+                    val apiVersionManager: ApiVersionManager,
+                    val socketFactory: ServerSocketFactory = ServerSocketFactory.INSTANCE,
+                    val connectionDisconnectListeners: Seq[ConnectionDisconnectListener] = Seq.empty
+                  ) extends Logging with BrokerReconfigurable {
 
   private val metricsGroup = new KafkaMetricsGroup(this.getClass)
 
@@ -176,8 +175,8 @@ class SocketServer(
    *                              be completed with an exception.
    */
   def enableRequestProcessing(
-    authorizerFutures: Map[Endpoint, CompletableFuture[Void]]
-  ): CompletableFuture[Void] = this.synchronized {
+                               authorizerFutures: Map[Endpoint, CompletableFuture[Void]]
+                             ): CompletableFuture[Void] = this.synchronized {
     if (stopped) {
       throw new RuntimeException("Can't enable request processing: SocketServer is stopped.")
     }
@@ -206,7 +205,7 @@ class SocketServer(
     info("Enabling request processing.")
     dataPlaneAcceptors.values().forEach(chainAcceptorFuture)
     FutureUtils.chainFuture(CompletableFuture.allOf(authorizerFutures.values.toArray: _*),
-        allAuthorizerFuturesComplete)
+      allAuthorizerFuturesComplete)
 
     // Construct a future that will be completed when all Acceptors have been successfully started.
     // Alternately, if any of them fail to start, this future will be completed exceptionally.
@@ -231,9 +230,10 @@ class SocketServer(
     val isBroker = apiVersionManager.listenerType.equals(ListenerType.BROKER)
     if (isBroker) {
       val producerPollingTast = new MemoryPollingTaskProducer(dataPlaneRequestChannel)
-      val consumerPollingTast = new MemoryPollingTaskConsumer(dataPlaneRequestChannel)
-      producerPollingTast.start()      
-      consumerPollingTast.start()
+      print("❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌;ldkfjals;kdfjl;askjl;dkjfals;dkjaklsdfjhlksdjhflkasdj")
+//      val consumerPollingTast = new MemoryPollingTaskConsumer(dataPlaneRequestChannel)
+//      producerPollingTast.start()
+//      consumerPollingTast.start()
     }
   }
 
@@ -246,7 +246,6 @@ class SocketServer(
   final class ShmMemoryPool(releaseFn: ByteBuffer => Unit) extends MemoryPool {
     override def tryAllocate(size: Int): ByteBuffer = null // SHM은 allocate 안 함
     override def release(buf: ByteBuffer): Unit = {
-      print("shm memory pool release!!!")
       if (buf ne null) releaseFn(buf) // JNI 함수 호출해서 C 풀에 release
     }
     override def availableMemory(): Long = Long.MaxValue
@@ -254,58 +253,90 @@ class SocketServer(
     override def isOutOfMemory(): Boolean = false
   }
 
-  object BrokerPerfLog {
-    val logger: CsvPerfLogger = new CsvPerfLogger("/tmp/broker_perf.csv", 100) // 100건당 1건
-  }
-  
+
   abstract class AbstractMemoryPollingTask(requestChannel: RequestChannel, connectionId: String) extends Runnable {
     @volatile private var running = true
     private var thread: Option[Thread] = None
-    private var currentMsg: SharedMemoryMesssage = _
-    def readSharedMemory(): ByteBuffer
-    def releaseSharedMemory(buf: ByteBuffer): Unit
 
+    // JNI 인터페이스 (상위32=idx, 하위32=len)
+    def readSharedMemory(): Long
+    def releaseSharedMemory(idx: Int): Unit
+
+    // Kafka 시간 소스
+    protected val time: Time = Time.SYSTEM
+
+    // 메모리 풀 (해제 콜백 시그니처가 Int => Unit 이어야 함)
     private lazy val pool: MemoryPool =
-      new ShmMemoryPool(releaseSharedMemory _)
+      new ShmMemoryPool((_: ByteBuffer) => ())   // ByteBuffer => Unit (no-op)
+
+    // SHM 풀 전체를 감싼 DirectByteBuffer (1회 래핑)
+    lazy val BIGBUFFER: ByteBuffer = {
+      val bb = SharedMemoryProducer.getPoolBigBuffer()
+      if (bb eq null) throw new IllegalStateException("❌ getPoolBigBuffer() returned null")
+      bb.order(ByteOrder.BIG_ENDIAN) // 오더 고정
+    }
+
+    val SLOT_SIZE: Int = SharedMemoryProducer.SLOT_SIZE
 
     def start(): Unit = {
-      if (thread.exists(_.isAlive)) {
-        return
-      }
+      if (thread.exists(_.isAlive)) return
       running = true
-      val t = new Thread(this)
+      val t = new Thread(this, s"AbstractMemoryPollingTask-$connectionId")
       thread = Some(t)
       t.start()
     }
 
-    def stop(): Unit = {
-      running = false
-    }
+    def stop(): Unit = { running = false }
 
     override def run(): Unit = {
       while (running) {
-        val data = readSharedMemory()
-        if (!running && data != null) {
-          releaseSharedMemory(data)
-          return
+        val packed: Long = readSharedMemory()
+        if (!running) return
+
+        if (packed == 0L) {
+          // 큐 비었음: 릴리즈할 슬롯 없음
+          Thread.`yield`()
+        } else {
+          val idx = (packed >>> 32).toInt
+          val len = (packed & 0xFFFF_FFFFL).toInt
+
+          if (idx < 0 || len <= 0 || len > (SLOT_SIZE - 4)) {
+            // 메타가 비정상이면(드물지만) 인덱스가 유효할 때만 반납
+            if (idx >= 0) releaseSharedMemory(idx)
+          } else {
+            // [len(4)][payload(len)]
+            val pos   = idx * SLOT_SIZE + 4
+            val limit = pos + len
+
+            // BIGBUFFER는 공용이므로 duplicate 후 경계 설정 → slice
+            val payload: ByteBuffer = {
+              val dup = BIGBUFFER.duplicate()
+              dup.limit(limit).position(pos)
+              dup.slice().order(ByteOrder.BIG_ENDIAN)
+            }
+
+            // 인덱스 수명은 여기서만 관리
+            try {
+              sendRequest(payload)   // 절대 이 안에서 release하지 말 것
+            } finally {
+              releaseSharedMemory(idx)
+            }
+          }
         }
-        sendRequest(data)
       }
     }
 
-  private def sendRequest(rawData: ByteBuffer): Unit = {
-    if (rawData == null) { Thread.`yield`(); return }
+    // payload만 받아서 RequestChannel로 전달. 해제 책임 없음.
+    private def sendRequest(rawData: ByteBuffer): Unit = {
+      if (rawData == null) { Thread.`yield`(); return }
 
-    try {
       val header = RequestHeader.parse(rawData)
       val nowNanos = time.nanoseconds()
-      val corr = header.correlationId
-      val t1ms = System.currentTimeMillis()             // 편도 계산용
 
-      val inetAddress = InetAddress.getLoopbackAddress
-      val kafkaPrincipal = new KafkaPrincipal(KafkaPrincipal.USER_TYPE, "ANONYMOUS")
-      val listenerName = new ListenerName("PLAINTEXT")
-      val clientInformation = new ClientInformation("client-software-name", "client-software-version")
+      val inetAddress      = InetAddress.getLoopbackAddress
+      val kafkaPrincipal   = new KafkaPrincipal(KafkaPrincipal.USER_TYPE, "ANONYMOUS")
+      val listenerName     = new ListenerName("PLAINTEXT")
+      val clientInformation= new ClientInformation("client-software-name", "client-software-version")
 
       val context = new RequestContext(
         header,
@@ -315,50 +346,38 @@ class SocketServer(
         listenerName,
         SecurityProtocol.PLAINTEXT,
         clientInformation,
-        false
+        /* fromPrivilegedListener = */ false
       )
 
       val req = new RequestChannel.Request(
-        1,
+        processor = 1,
         context = context,
         startTimeNanos = nowNanos,
-        memoryPool = pool,            // NONE 대신 커스텀 풀
-        buffer = rawData,             // SHM 기반 DBB
+        memoryPool = pool,          // SHM-aware 풀
+        buffer = rawData,           // 제로카피 뷰
         metrics = requestChannel.metrics,
         envelope = None
       )
 
       requestChannel.sendRequest(req)
-
-      BrokerPerfLog.logger.logT1ms(corr, t1ms)
-      BrokerPerfLog.logger.logT1ns(corr, nowNanos) // ns도 필요하면
-      println(s"[DEBUG] wrote T1 corr=$corr nowNanos=$nowNanos")
-    } catch {
-      // ⛔ try-else 아님. 반드시 catch!
-      case t: Throwable =>
-        // 큐에 못 넣었으니 직접 반납
-        releaseSharedMemory(rawData)
-        throw t
     }
   }
-  }
-  
+
   class MemoryPollingTaskProducer(requestChannel: RequestChannel)
-    @volatile private var lastReadIndex: Int = -1
     extends AbstractMemoryPollingTask(requestChannel, "dummy-connection-producer") {
-    override def readSharedMemory(): ByteBuffer = {
+    override def readSharedMemory(): Long =
       SharedMemoryProducer.readSharedMemoryByIndex()
-    override def releaseSharedMemory(buf: ByteBuffer): Unit =
-      SharedMemoryProducer.releaseSharedmemoryByBuffer(buf)
+    override def releaseSharedMemory(idx: Int): Unit =
+      SharedMemoryProducer.releaseSharedMemoryIndex(idx)
   }
 
-  class MemoryPollingTaskConsumer(requestChannel: RequestChannel)
-    extends AbstractMemoryPollingTask(requestChannel, "dummy-connection-consumer") {
-    override def readSharedMemory(): ByteBuffer = 
-      SharedMemoryConsumer.readSharedMemoryByConsumer()
-    override def releaseSharedMemory(buf: ByteBuffer): Unit =
-      SharedMemoryProducer.releaseSharedmemoryByBuffer(buf)
-  }
+//  class MemoryPollingTaskConsumer(requestChannel: RequestChannel)
+//    extends AbstractMemoryPollingTask(requestChannel, "dummy-connection-consumer") {
+//    override def readSharedMemory(): Int =
+//      SharedMemoryConsumer.readSharedMemoryByConsumer()
+//    override def releaseSharedMemory(buf: ByteBuffer): Unit =
+//      SharedMemoryProducer.releaseSharedmemoryByBuffer(buf)
+//  }
 
   /**
    * Stop processing requests and new connections.
@@ -519,18 +538,18 @@ class DataPlaneAcceptor(socketServer: SocketServer,
                         memoryPool: MemoryPool,
                         apiVersionManager: ApiVersionManager)
   extends Acceptor(socketServer,
-                   endPoint,
-                   config,
-                   nodeId,
-                   connectionQuotas,
-                   time,
-                   isPrivilegedListener,
-                   requestChannel,
-                   metrics,
-                   credentialProvider,
-                   logContext,
-                   memoryPool,
-                   apiVersionManager) with ListenerReconfigurable {
+    endPoint,
+    config,
+    nodeId,
+    connectionQuotas,
+    time,
+    isPrivilegedListener,
+    requestChannel,
+    metrics,
+    credentialProvider,
+    logContext,
+    memoryPool,
+    apiVersionManager) with ListenerReconfigurable {
 
   override def metricPrefix(): String = DataPlaneAcceptor.MetricPrefix
   override def threadPrefix(): String = DataPlaneAcceptor.ThreadPrefix
@@ -901,24 +920,24 @@ private[kafka] abstract class Acceptor(val socketServer: SocketServer,
                    connectionDisconnectListeners: Seq[ConnectionDisconnectListener]): Processor = {
     val name = s"${threadPrefix()}-kafka-network-thread-$nodeId-${endPoint.listenerName}-${endPoint.securityProtocol}-$id"
     new Processor(id,
-                  time,
-                  config.socketRequestMaxBytes,
-                  requestChannel,
-                  connectionQuotas,
-                  config.connectionsMaxIdleMs,
-                  config.failedAuthenticationDelayMs,
-                  listenerName,
-                  securityProtocol,
-                  config,
-                  metrics,
-                  credentialProvider,
-                  memoryPool,
-                  logContext,
-                  Processor.ConnectionQueueSize,
-                  isPrivilegedListener,
-                  apiVersionManager,
-                  name,
-                  connectionDisconnectListeners)
+      time,
+      config.socketRequestMaxBytes,
+      requestChannel,
+      connectionQuotas,
+      config.connectionsMaxIdleMs,
+      config.failedAuthenticationDelayMs,
+      listenerName,
+      securityProtocol,
+      config,
+      metrics,
+      credentialProvider,
+      memoryPool,
+      logContext,
+      Processor.ConnectionQueueSize,
+      isPrivilegedListener,
+      apiVersionManager,
+      name,
+      connectionDisconnectListeners)
   }
 }
 
@@ -930,7 +949,7 @@ private[kafka] object Processor {
 
   private[network] def parseRequestHeader(apiVersionManager: ApiVersionManager, buffer: ByteBuffer): RequestHeader = {
     val header = RequestHeader.parse(buffer)
-    
+
     if (apiVersionManager.isApiEnabled(header.apiKey, header.apiVersion)) {
       header
     } else if (header.isApiVersionSupported()) {
@@ -953,26 +972,26 @@ private[kafka] object Processor {
  *                             relying on the inter broker listener would be acting as the privileged listener.
  */
 private[kafka] class Processor(
-  val id: Int,
-  time: Time,
-  maxRequestSize: Int,
-  requestChannel: RequestChannel,
-  connectionQuotas: ConnectionQuotas,
-  connectionsMaxIdleMs: Long,
-  failedAuthenticationDelayMs: Int,
-  listenerName: ListenerName,
-  securityProtocol: SecurityProtocol,
-  config: KafkaConfig,
-  metrics: Metrics,
-  credentialProvider: CredentialProvider,
-  memoryPool: MemoryPool,
-  logContext: LogContext,
-  connectionQueueSize: Int,
-  isPrivilegedListener: Boolean,
-  apiVersionManager: ApiVersionManager,
-  threadName: String,
-  connectionDisconnectListeners: Seq[ConnectionDisconnectListener]
-) extends Runnable with Logging {
+                                val id: Int,
+                                time: Time,
+                                maxRequestSize: Int,
+                                requestChannel: RequestChannel,
+                                connectionQuotas: ConnectionQuotas,
+                                connectionsMaxIdleMs: Long,
+                                failedAuthenticationDelayMs: Int,
+                                listenerName: ListenerName,
+                                securityProtocol: SecurityProtocol,
+                                config: KafkaConfig,
+                                metrics: Metrics,
+                                credentialProvider: CredentialProvider,
+                                memoryPool: MemoryPool,
+                                logContext: LogContext,
+                                connectionQueueSize: Int,
+                                isPrivilegedListener: Boolean,
+                                apiVersionManager: ApiVersionManager,
+                                threadName: String,
+                                connectionDisconnectListeners: Seq[ConnectionDisconnectListener]
+                              ) extends Runnable with Logging {
   private val metricsGroup = new KafkaMetricsGroup(this.getClass)
 
   val shouldRun: AtomicBoolean = new AtomicBoolean(true)
@@ -1489,8 +1508,8 @@ class ConnectionQuotas(config: KafkaConfig, time: Time, metrics: Metrics) extend
   def updateIpConnectionRateQuota(ip: Option[InetAddress], maxConnectionRate: Option[Int]): Unit = synchronized {
     def isIpConnectionRateMetric(metricName: MetricName) = {
       metricName.name == ConnectionQuotaEntity.CONNECTION_RATE_METRIC_NAME &&
-      metricName.group == MetricsGroup &&
-      metricName.tags.containsKey(ConnectionQuotaEntity.IP_METRIC_TAG)
+        metricName.group == MetricsGroup &&
+        metricName.tags.containsKey(ConnectionQuotaEntity.IP_METRIC_TAG)
     }
 
     def shouldUpdateQuota(metric: KafkaMetric, quotaLimit: Int) = {

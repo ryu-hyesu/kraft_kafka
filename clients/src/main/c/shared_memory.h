@@ -209,6 +209,7 @@ int initialize_shared_memory(SharedMemoryHandle *handle, const char *shm_name, c
 void cleanup_shared_memory(SharedMemoryHandle *handle, const char *shm_name, const char *sem_name);
 bool buffer_try_enqueue(LockFreeRingBuffer *rb, const char *data, int length);
 bool buffer_try_dequeue(LockFreeRingBuffer *rb, const char **out_ptr, int *out_length);
+bool buffer_try_dequeue_idx(LockFreeRingBuffer *rb, uint32_t *out_idx, int *out_length); // new
 
 
 #endif

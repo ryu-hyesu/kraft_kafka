@@ -7,20 +7,22 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-/*
- * Class:     org_apache_kafka_clients_producer_SharedMemoryProducer
- * Method:    allocateSharedMemoryByBuffer
- * Signature: ()Ljava/nio/ByteBuffer;
- */
-JNIEXPORT jobject JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryProducer_allocateSharedMemoryByBuffer
-  (JNIEnv *, jclass);
-
+#undef org_apache_kafka_clients_producer_SharedMemoryProducer_SLOT_SIZE
+#define org_apache_kafka_clients_producer_SharedMemoryProducer_SLOT_SIZE 1048576L
 /*
  * Class:     org_apache_kafka_clients_producer_SharedMemoryProducer
  * Method:    getPoolBigBuffer
  * Signature: ()Ljava/nio/ByteBuffer;
  */
 JNIEXPORT jobject JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryProducer_getPoolBigBuffer
+  (JNIEnv *, jclass);
+
+/*
+ * Class:     org_apache_kafka_clients_producer_SharedMemoryProducer
+ * Method:    allocateSharedMemoryByBuffer
+ * Signature: ()Ljava/nio/ByteBuffer;
+ */
+JNIEXPORT jobject JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryProducer_allocateSharedMemoryByBuffer
   (JNIEnv *, jclass);
 
 /*
@@ -41,6 +43,14 @@ JNIEXPORT jobject JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryPro
 
 /*
  * Class:     org_apache_kafka_clients_producer_SharedMemoryProducer
+ * Method:    readSharedMemoryByIndex
+ * Signature: ()J
+ */
+JNIEXPORT jlong JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryProducer_readSharedMemoryByIndex
+  (JNIEnv *, jclass);
+
+/*
+ * Class:     org_apache_kafka_clients_producer_SharedMemoryProducer
  * Method:    closeSharedMemory
  * Signature: ()V
  */
@@ -54,6 +64,30 @@ JNIEXPORT void JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryProduc
  */
 JNIEXPORT void JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryProducer_releaseSharedmemoryByBuffer
   (JNIEnv *, jclass, jobject);
+
+/*
+ * Class:     org_apache_kafka_clients_producer_SharedMemoryProducer
+ * Method:    allocateSharedMemoryIndex
+ * Signature: ()I
+ */
+JNIEXPORT jint JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryProducer_allocateSharedMemoryIndex
+  (JNIEnv *, jclass);
+
+/*
+ * Class:     org_apache_kafka_clients_producer_SharedMemoryProducer
+ * Method:    commitSharedMemoryByIndex
+ * Signature: (II)Z
+ */
+JNIEXPORT jboolean JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryProducer_commitSharedMemoryByIndex
+  (JNIEnv *, jclass, jint, jint);
+
+/*
+ * Class:     org_apache_kafka_clients_producer_SharedMemoryProducer
+ * Method:    releaseSharedMemoryIndex
+ * Signature: (I)V
+ */
+JNIEXPORT void JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryProducer_releaseSharedMemoryIndex
+  (JNIEnv *, jclass, jint);
 
 #ifdef __cplusplus
 }
