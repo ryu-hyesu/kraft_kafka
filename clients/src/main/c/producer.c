@@ -76,6 +76,14 @@ Java_org_apache_kafka_clients_producer_SharedMemoryProducer_allocateSharedMemory
     return buffer;
 }
 
+JNIEXPORT void JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryProducer_releaseSharedmemoryByBuffer(JNIEnv *env, jobject obj, jobject buffer) {
+    if (!buffer) return;
+    void *addr = (*env)->GetDirectBufferAddress(env, buffer);
+    if(!addr) return;
+    unsigned char *base = (unsigned char*)addr - 4;
+    shm_pool_release(base);
+}
+
 JNIEXPORT jobject JNICALL
 Java_org_apache_kafka_clients_producer_SharedMemoryProducer_getPoolBigBuffer(
     JNIEnv *env, jobject obj)
