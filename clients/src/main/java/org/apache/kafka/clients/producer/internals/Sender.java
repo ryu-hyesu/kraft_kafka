@@ -864,10 +864,12 @@ public class Sender implements Runnable {
             sendProduceRequest(now, entry.getKey(), acks, requestTimeoutMs, entry.getValue());
     }
 
+    /*
     static public long SharedMemorymergeTime;
     static public long SharedMemoryCommitTime;
     static public long SharedMemoryTotalTime;
-
+    */
+    
     // 전역 1회 생성
     static final CsvPerfLogger producerPerfLogger;
     static {
@@ -944,7 +946,7 @@ private void sendProduceRequest(long now, int destination, short acks, int timeo
     if (index < 0)
         throw new IllegalStateException("❌ No available shared memory slot (pool exhausted)");
     
-    final int SAMPLE_SIZE = SharedMemoryProducer.SLOT_SIZE; // 일반적으로 1MB
+    final int SAMPLE_SIZE = SharedMemoryProducer.SLOT_SIZE;
     int offset = index * SAMPLE_SIZE;
 
     if (totalSize > SAMPLE_SIZE) {

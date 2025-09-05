@@ -1,4 +1,4 @@
-// #define BACKOFF_PROF
+#define BACKOFF_PROF
 #include "shared_memory.h"
 #include "shared_memory_pool.h"
 #include <fcntl.h>        // O_CREAT, O_RDWR
@@ -15,6 +15,7 @@
 // static _Atomic int g_pool_inited = 0;
 _Atomic uint64_t enq_success_count = 0;
 _Atomic uint64_t deq_success_count = 0;
+
 
 int initialize_memory_pool() {
     if (init_shared_memory_pool() != 0) {
@@ -129,14 +130,14 @@ bool buffer_try_enqueue(LockFreeRingBuffer *rb, const char *data, int length) {
     for (int spin = 0;
         (int32_t)(my - atomic_load_explicit(&rb->cons_seq, memory_order_relaxed)) >= (int32_t)BUF_COUNT;
         ++spin) {
-        backoff_spin(spin);
+        fprintf(stderr, "[SharedMemory] 용량확인 / ");
+        cpu_relax();
     }
 
     // 3) 슬롯 쓰기
     uint32_t idx = my & (BUF_COUNT - 1);
     rb->offset[idx] = ptr_to_offset(data);
 
-    int attempt = 0;
     // 4) 게시
     for (;;) {
         uint32_t pub = atomic_load_explicit(&rb->prod_pub, memory_order_relaxed);
@@ -145,7 +146,8 @@ bool buffer_try_enqueue(LockFreeRingBuffer *rb, const char *data, int length) {
                 &rb->prod_pub, &pub, my+1,
                 memory_order_release, memory_order_relaxed)) break;
         } else {
-            backoff_spin(++attempt);
+            fprintf(stderr, "[SharedMemory] 자기 순서가 아님 / ");
+            cpu_relax();
         }
     }
     return true;
@@ -157,7 +159,6 @@ bool buffer_try_dequeue(LockFreeRingBuffer *rb, const char **out_ptr, int *out_l
     void *pool_start = &g_pool->data[0][0];
     void *pool_end   = &g_pool->data[POOL_COUNT - 1][SAMPLE_SIZE - 1];
     
-    int attempt = 0;
     for (;;) {
         uint32_t head = atomic_load_explicit(&rb->cons_seq, memory_order_relaxed);
         uint32_t tail = atomic_load_explicit(&rb->prod_pub, memory_order_acquire);
@@ -169,8 +170,8 @@ bool buffer_try_dequeue(LockFreeRingBuffer *rb, const char **out_ptr, int *out_l
         if (!atomic_compare_exchange_weak_explicit(
                 &rb->cons_seq, &exp, new_head,
                 memory_order_acquire, memory_order_relaxed)) {
-
-            backoff_spin(++attempt);
+            fprintf(stderr, "[SharedMemory] Buffer Try Enqueue 경쟁 / ");
+            cpu_relax();
             continue; // 경쟁 → 재시도
         }
 

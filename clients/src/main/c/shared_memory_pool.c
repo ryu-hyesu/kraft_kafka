@@ -1,3 +1,5 @@
+#define BACKOFF_PROF  // 이 줄 추가
+
 #include "shared_memory_pool.h"
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -151,7 +153,6 @@ unsigned char* shm_pool_get() {
         return NULL;
     }
 
-    int attempt = 0;
     for (;;) {
         uint64_t tail = atomic_load_explicit(&g_pool->meta.tail, memory_order_relaxed);
         uint64_t pub = atomic_load_explicit(&g_pool->meta.head_pub, memory_order_acquire);
@@ -174,7 +175,8 @@ unsigned char* shm_pool_get() {
             unsigned char* p = &g_pool->data[idx][0];
             return p;
         }
-        backoff_spin(++attempt);
+        fprintf(stderr, "[SharedMemoryPool] pool get / ");
+        cpu_relax();
     }
 }
 
@@ -263,10 +265,10 @@ void shm_pool_release(unsigned char* ptr) {
     uint32_t pos = (uint32_t)(my & (POOL_COUNT - 1)); // 인덱스 계산
 
     // 2) 용량 확인
-    int spin = 0;
     while ((int64_t)(my - atomic_load_explicit(&g_pool->meta.head_pub, memory_order_acquire))
             >= (int64_t)POOL_COUNT) {
-        backoff_spin(++spin);
+        fprintf(stderr, "[SharedMemoryPool] Release 용량확인 / ");
+        cpu_relax();
     }
 
     // 3) 슬롯 작성

@@ -1,8 +1,10 @@
+#define BACKOFF_PROF 
 #ifndef SHARED_MEMORY_H
 #define SHARED_MEMORY_H
 
 // #define _POSIX_C_SOURCE 200809L
-
+#include "tls_profiler.h" // cpu relax 호출용
+#include <pthread.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <semaphore.h>
@@ -37,6 +39,7 @@ typedef struct {
     sem_t *semaphore;
 } SharedMemoryHandle;
 
+/*
 // ===== Backoff metrics (옵션) =====
 #ifdef BACKOFF_PROF
 
@@ -92,7 +95,8 @@ static inline void bk_deq_add(uint64_t total_ns,
     atomic_fetch_add(&g_deq_cas_wait_ns, cas_wait_ns);
 }
 
-/* 확장 출력 */
+
+/* 확장 출력 
 static inline void bk_print_times_ext(void){
     // allocate
     uint64_t alloccnt = atomic_load(&g_alloc_cnt);
@@ -166,18 +170,86 @@ static inline void backoff_print_totals(void){
       relax, yield, y_avg_us, nanos, n_avg_us);
 }
 #endif
+*/
 
-// 기존 cpu_relax / backoff_spin 수정
+/* 스레드 로컬 카운터
+#ifdef BACKOFF_PROF
+
+// 전역 카운터: 스레드 ID 할당용
+static atomic_uint g_thread_id_counter = 0;
+
+// 스레드 로컬: 각 스레드의 고유 ID 및 relax 카운트
+static __thread uint32_t thread_id;
+static __thread uint64_t t_bk_relax_count = 0;
+
+// 스레드별 ID 초기화 함수
+static inline void init_thread_id(void) {
+    static __thread int initialized = 0;
+    if (!initialized) {
+        thread_id = atomic_fetch_add(&g_thread_id_counter, 1);
+        initialized = 1;
+    }
+}
+
+#endif
+
 static inline void cpu_relax(void) {
 #if defined(__x86_64__) || defined(__i386__)
     __builtin_ia32_pause();
 #elif defined(__aarch64__)
     __asm__ __volatile__("yield");
 #else
-    ;
+    
+#endif
+
+#ifdef BACKOFF_PROF
+    increment_relax_count();
+    print_relax_count();
+#endif
+}
+*/
+
+static inline void cpu_relax(void) {
+#ifndef BACKOFF_PROF  // 백오프 비활성화 시, 단순 relax 1회만
+    #if defined(__x86_64__) || defined(__i386__)
+        __builtin_ia32_pause();
+    #elif defined(__aarch64__)
+        __asm__ __volatile__("yield");
+    #endif
+#else
+    increment_relax_count();
+    print_relax_count();
+    // 지수 백오프: 최대 1 << 10 = 1024 반복
+
+    uint64_t backoff_iters = 1ULL << (t_bk_relax_count < 12 ? t_bk_relax_count : 12);
+    backoff_iters = backoff_iters / 2;
+    
+    uint64_t jitter = (thread_id * 37) & 0xF; // 스레드 순서 기반 (0~15)
+    backoff_iters = backoff_iters + jitter;
+    
+    fprintf(stderr, "[BackOff Iters] %" PRIu64 " [jitter]\n", backoff_iters);
+    for (uint64_t i = 0; i < backoff_iters; ++i) {
+        #if defined(__x86_64__) || defined(__i386__)
+            __builtin_ia32_pause();
+        #elif defined(__aarch64__)
+            __asm__ __volatile__("yield");
+        #endif
+    }
 #endif
 }
 
+/*
+#ifdef BACKOFF_PROF
+static inline void print_cpu_relax_stats(void) {
+    fprintf(stderr, "[Thread %u] cpu_relax() calls: %" PRIu64 "\n",
+            thread_id, t_bk_relax_count);
+}
+#endif
+*/
+
+
+
+/*
 static inline void backoff_spin(int spin) {
 #ifdef BACKOFF_PROF
     if (spin < 512) {
@@ -204,6 +276,7 @@ static inline void backoff_spin(int spin) {
     nanosleep(&ts, NULL);
 #endif
 }
+*/
 
 int initialize_shared_memory(SharedMemoryHandle *handle, const char *shm_name, const char *sem_name, bool create);
 void cleanup_shared_memory(SharedMemoryHandle *handle, const char *shm_name, const char *sem_name);

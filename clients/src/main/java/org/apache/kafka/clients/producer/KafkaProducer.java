@@ -1365,10 +1365,6 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
 
     private void close(Duration timeout, boolean swallowException) {
         // SharedMemoryProducer.closeSharedMemory();
-        System.out.println("총 걸린 시간 : " + String.valueOf(Sender.SharedMemoryTotalTime) + 
-            "allocate 시간 : " + String.valueOf(Sender.SharedMemorymergeTime) +
-            "commit 시간: " + String.valueOf(Sender.SharedMemoryCommitTime)
-        );
 
         long timeoutMs = timeout.toMillis();
         if (timeoutMs < 0)

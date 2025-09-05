@@ -1,4 +1,5 @@
 // producer.c
+#define BACKOFF_PROF  
 
 #include "shared_memory.h"
 #include "shared_memory_pool.h"
@@ -295,9 +296,6 @@ JNIEXPORT void JNICALL
 Java_org_apache_kafka_clients_producer_SharedMemoryProducer_closeSharedMemory(
     JNIEnv *env, jobject obj)
 {
-#ifdef BACKOFF_PROF
-    bk_print_times_ext();
-#endif
     if (g_pool_bigbuf_global) {
         (*env)->DeleteGlobalRef(env, g_pool_bigbuf_global);
         g_pool_bigbuf_global = NULL;
