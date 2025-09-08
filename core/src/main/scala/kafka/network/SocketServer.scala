@@ -54,7 +54,7 @@ import org.apache.kafka.server.quota.QuotaUtils
 import org.apache.kafka.server.util.FutureUtils
 import org.slf4j.event.Level
 
-import org.apache.kafka.clients.producer.CsvPerfLogger
+// import org.apache.kafka.clients.producer.CsvPerfLogger
 import org.apache.kafka.clients.producer.SharedMemoryProducer
 import org.apache.kafka.clients.consumer.SharedMemoryConsumer
 
@@ -242,29 +242,22 @@ class SocketServer(
     new DataPlaneAcceptor(this, endPoint, config, nodeId, connectionQuotas, time, isPrivilegedListener, requestChannel, metrics, credentialProvider, logContext, memoryPool, apiVersionManager)
   }
 
-  final class ShmMemoryPool(releaseFn: ByteBuffer => Unit) extends MemoryPool {
+  final class ShmMemoryPool() extends MemoryPool {
     override def tryAllocate(size: Int): ByteBuffer = null // SHM은 allocate 안 함
-    override def release(buf: ByteBuffer): Unit = {
-      print("shm memory pool release!!!")
-      if (buf ne null) releaseFn(buf) // JNI 함수 호출해서 C 풀에 release
-    }
+    override def release(buf: ByteBuffer): Unit = {}
     override def availableMemory(): Long = Long.MaxValue
     override def size(): Long = Long.MaxValue
     override def isOutOfMemory(): Boolean = false
   }
 
-  object BrokerPerfLog {
-    val logger: CsvPerfLogger = new CsvPerfLogger("/tmp/broker_perf.csv", 100) // 100건당 1건
-  }
-  
   abstract class AbstractMemoryPollingTask(requestChannel: RequestChannel, connectionId: String) extends Runnable {
     @volatile private var running = true
     private var thread: Option[Thread] = None
     def readSharedMemory(): ByteBuffer
-    def releaseSharedMemory(buf: ByteBuffer): Unit
+    def releaseSharedMemory(): Unit
 
     private lazy val pool: MemoryPool =
-      new ShmMemoryPool(releaseSharedMemory _)
+      new ShmMemoryPool()
 
     def start(): Unit = {
       if (thread.exists(_.isAlive)) {
@@ -284,7 +277,7 @@ class SocketServer(
       while (running) {
         val data = readSharedMemory()
         if (!running && data != null) {
-          releaseSharedMemory(data)
+          // releaseSharedMemory(data)
           return
         }
         sendRequest(data)
@@ -296,9 +289,7 @@ class SocketServer(
 
     try {
       val header = RequestHeader.parse(rawData)
-      val nowNanos = time.nanoseconds()
-      val corr = header.correlationId
-      val t1ms = System.currentTimeMillis()             // 편도 계산용
+      val nowNanos = time.nanoseconds()         // 편도 계산용
 
       val inetAddress = InetAddress.getLoopbackAddress
       val kafkaPrincipal = new KafkaPrincipal(KafkaPrincipal.USER_TYPE, "ANONYMOUS")
@@ -327,15 +318,11 @@ class SocketServer(
       )
 
       requestChannel.sendRequest(req)
-
-      BrokerPerfLog.logger.logT1ms(corr, t1ms)
-      BrokerPerfLog.logger.logT1ns(corr, nowNanos) // ns도 필요하면
-      println(s"[DEBUG] wrote T1 corr=$corr nowNanos=$nowNanos")
     } catch {
       // ⛔ try-else 아님. 반드시 catch!
       case t: Throwable =>
         // 큐에 못 넣었으니 직접 반납
-        releaseSharedMemory(rawData)
+        // releaseSharedMemory(rawData)
         throw t
     }
   }
@@ -344,15 +331,16 @@ class SocketServer(
   class MemoryPollingTaskProducer(requestChannel: RequestChannel)
     extends AbstractMemoryPollingTask(requestChannel, "dummy-connection-producer") {
     override def readSharedMemory(): ByteBuffer = SharedMemoryProducer.readSharedMemoryByBuffer()
-    override def releaseSharedMemory(buf: ByteBuffer): Unit = SharedMemoryProducer.releaseSharedmemoryByBuffer(buf)
+    override def releaseSharedMemory(): Unit = {}
+    // SharedMemoryProducer.releaseSharedmemoryByBuffer(buf)
   }
 
   class MemoryPollingTaskConsumer(requestChannel: RequestChannel)
     extends AbstractMemoryPollingTask(requestChannel, "dummy-connection-consumer") {
     override def readSharedMemory(): ByteBuffer = 
       SharedMemoryConsumer.readSharedMemoryByConsumer()
-    override def releaseSharedMemory(buf: ByteBuffer): Unit =
-      SharedMemoryProducer.releaseSharedmemoryByBuffer(buf)
+    override def releaseSharedMemory(): Unit = {}
+      // SharedMemoryProducer.releaseSharedmemoryByBuffer(buf)
   }
 
   /**

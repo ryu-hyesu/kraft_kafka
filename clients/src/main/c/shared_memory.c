@@ -130,7 +130,6 @@ bool buffer_try_enqueue(LockFreeRingBuffer *rb, const char *data, int length) {
     for (int spin = 0;
         (int32_t)(my - atomic_load_explicit(&rb->cons_seq, memory_order_relaxed)) >= (int32_t)BUF_COUNT;
         ++spin) {
-        fprintf(stderr, "[SharedMemory] 용량확인 / ");
         cpu_relax();
     }
 
@@ -146,7 +145,6 @@ bool buffer_try_enqueue(LockFreeRingBuffer *rb, const char *data, int length) {
                 &rb->prod_pub, &pub, my+1,
                 memory_order_release, memory_order_relaxed)) break;
         } else {
-            fprintf(stderr, "[SharedMemory] 자기 순서가 아님 / ");
             cpu_relax();
         }
     }
@@ -170,7 +168,6 @@ bool buffer_try_dequeue(LockFreeRingBuffer *rb, const char **out_ptr, int *out_l
         if (!atomic_compare_exchange_weak_explicit(
                 &rb->cons_seq, &exp, new_head,
                 memory_order_acquire, memory_order_relaxed)) {
-            fprintf(stderr, "[SharedMemory] Buffer Try Enqueue 경쟁 / ");
             cpu_relax();
             continue; // 경쟁 → 재시도
         }

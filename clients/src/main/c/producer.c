@@ -81,7 +81,7 @@ JNIEXPORT void JNICALL Java_org_apache_kafka_clients_producer_SharedMemoryProduc
     if (!buffer) return;
     void *addr = (*env)->GetDirectBufferAddress(env, buffer);
     if(!addr) return;
-    unsigned char *base = (unsigned char*)addr - 4;
+    unsigned char *base = (unsigned char*)addr;
     shm_pool_release(base);
 }
 
@@ -229,11 +229,7 @@ Java_org_apache_kafka_clients_producer_SharedMemoryProducer_readSharedMemoryByIn
         return NULL;
     }
 
-    // Create result object: new SharedMemoryMessage(buffer, index)
-    jclass cls = (*env)->FindClass(env, "org/apache/kafka/clients/producer/SharedMemoryMessage");
-    jmethodID ctor = (*env)->GetMethodID(env, cls, "<init>", "(Ljava/nio/ByteBuffer;I)V");
-    jobject result = (*env)->NewObject(env, cls, ctor, buffer, (jint)index);
-    return result;
+    return buffer;
 }
 
 
@@ -269,7 +265,7 @@ Java_org_apache_kafka_clients_producer_SharedMemoryProducer_readSharedMemoryByBu
         return NULL;
     }
 
-    unsigned char *base = (unsigned char*)ptr - 4;
+    unsigned char *base = (unsigned char*)ptr;
 
     void *copy = malloc((size_t)length);
     if (!copy) {

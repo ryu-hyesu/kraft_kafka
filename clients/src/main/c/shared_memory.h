@@ -227,7 +227,6 @@ static inline void cpu_relax(void) {
     uint64_t jitter = (thread_id * 37) & 0xF; // 스레드 순서 기반 (0~15)
     backoff_iters = backoff_iters + jitter;
     
-    fprintf(stderr, "[BackOff Iters] %" PRIu64 " [jitter]\n", backoff_iters);
     for (uint64_t i = 0; i < backoff_iters; ++i) {
         #if defined(__x86_64__) || defined(__i386__)
             __builtin_ia32_pause();

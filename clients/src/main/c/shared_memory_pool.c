@@ -175,7 +175,6 @@ unsigned char* shm_pool_get() {
             unsigned char* p = &g_pool->data[idx][0];
             return p;
         }
-        fprintf(stderr, "[SharedMemoryPool] pool get / ");
         cpu_relax();
     }
 }
@@ -267,7 +266,6 @@ void shm_pool_release(unsigned char* ptr) {
     // 2) 용량 확인
     while ((int64_t)(my - atomic_load_explicit(&g_pool->meta.head_pub, memory_order_acquire))
             >= (int64_t)POOL_COUNT) {
-        fprintf(stderr, "[SharedMemoryPool] Release 용량확인 / ");
         cpu_relax();
     }
 
