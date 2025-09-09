@@ -1,5 +1,3 @@
-#define BACKOFF_PROF  // 이 줄 추가
-
 #include "shared_memory_pool.h"
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -275,13 +273,6 @@ void shm_pool_release(unsigned char* ptr) {
     // 4) 슬롯 게시 표시
     atomic_store_explicit(&g_pool->meta.pub_seq[pos], my + 1, memory_order_release);
     
-    // 3) head_pub 가져옴 (여기서 head_pub에 접근하기 위해 경합 발생함)
-    // int spin = 0;
-    // while (atomic_load_explicit(&g_pool->meta.head_pub, memory_order_relaxed) != my) {
-    //     backoff_spin(++spin);
-    // }
-    
-    // 한 놈만 민다!!
     uint64_t hp = atomic_load_explicit(&g_pool->meta.head_pub, memory_order_relaxed);
     if (my == hp) {
         // 대표 한 놈만 '연속 구간'을 스캔해서 head_pub를 당긴다
@@ -290,7 +281,6 @@ void shm_pool_release(unsigned char* ptr) {
             atomic_store_explicit(&advance_lock, 0, memory_order_release);
         }
     }
-    // try_advance_head_pub(); 
 }
 
 

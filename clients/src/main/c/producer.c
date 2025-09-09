@@ -1,5 +1,5 @@
 // producer.c
-#define BACKOFF_PROF  
+
 
 #include "shared_memory.h"
 #include "shared_memory_pool.h"
@@ -127,11 +127,6 @@ Java_org_apache_kafka_clients_producer_SharedMemoryProducer_allocateSharedMemory
     uintptr_t base = (uintptr_t)&g_pool->data[0][0];
     uintptr_t p    = (uintptr_t)ptr;
     uint32_t idx   = (uint32_t)((p - base) / (uintptr_t)SAMPLE_SIZE);
-
-    // 매핑 체크
-    volatile unsigned char t0 = ptr[0];
-    volatile unsigned char tN = ptr[SAMPLE_SIZE - 1];
-    (void)t0; (void)tN;
 
     return (jint)idx;
 }
@@ -265,7 +260,7 @@ Java_org_apache_kafka_clients_producer_SharedMemoryProducer_readSharedMemoryByBu
         return NULL;
     }
 
-    unsigned char *base = (unsigned char*)ptr;
+    unsigned char *base = (unsigned char*)ptr - 4;
 
     void *copy = malloc((size_t)length);
     if (!copy) {
